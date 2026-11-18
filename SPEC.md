@@ -120,6 +120,28 @@ small, fast model for typed decisions and a frontier model for writing.
 Model versions are pinned, and changing one is a bag change that goes
 through evals (§4.6).
 
+### 4.3.1 Tool loop
+
+A route lists the bag tools its model may call (`tools: ["footage_search"]`);
+by default it offers none. Within each attempt the runtime loops:
+
+1. Call the model with the route's tools.
+2. If it asks for tools, run each call in order: validate the arguments
+   against the tool's zod schema, apply `enforce-tool` directives (which can
+   transform the arguments or block the call), then run the tool.
+3. Send the results back and repeat until the model gives a final answer.
+   Then the output checks run (schema, then `enforce`).
+
+The loop never throws on a failed tool call. Unknown or unoffered tools,
+invalid arguments, blocked calls and thrown errors all go back to the model
+as error results, so it can recover. More than `maxToolTurns` (default 8)
+tool turns in one attempt fails the operation.
+
+Every call is recorded in the trace with the arguments as executed, its
+result or error, and which rule blocked it, if any. Provider adapters
+replay assistant turns verbatim (Anthropic thinking blocks, Gemini thought
+signatures), as multi-turn tool use requires.
+
 ### 4.4 Memory
 
 - Scopes are **org → group → user**, matching the host's data model.
@@ -250,7 +272,8 @@ Node ≥ 22.
 
 ## 7. Milestones
 
-1. **M1 — Core + SDK**: rule engine (always/model/code × prose/enforce),
+1. **M1 — Core + SDK**: rule engine (always/model/code × prose/enforce/enforce-tool),
+   tool loop,
    context assembly, traces, memory with per-scope policy, SQLite store, eval
    runner, provider adapters, fs + S3 artifact stores, reference bag.
 2. **M2 — Server + CLI**: HTTP API (`POST /operations/:name`), `saddlebags`

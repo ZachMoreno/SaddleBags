@@ -102,18 +102,52 @@ export interface Tool<S extends z.ZodType = z.ZodType, R = unknown> {
 
 // ─── Models & routes ──────────────────────────────────────────────────────
 
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
+/** A tool as offered to a model: name, description and JSON Schema for its arguments. */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
 }
 
+/** A tool call requested by the model. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: unknown;
+}
+
+export interface ToolResult {
+  callId: string;
+  name: string;
+  /** Serialized result (JSON for structured values), or the error message. */
+  content: string;
+  isError?: boolean;
+}
+
+/**
+ * Provider-specific content replayed verbatim on the next request, e.g.
+ * Anthropic thinking blocks or Gemini thought signatures. Only the provider
+ * that produced it reads it; others fall back to `content`/`toolCalls`.
+ */
+export interface RawContent {
+  provider: string;
+  data: unknown;
+}
+
+export type ChatMessage =
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: ToolCall[]; raw?: RawContent }
+  | { role: "tool"; results: ToolResult[] };
+
 export interface GenerateRequest {
-  /** Pinned model id, e.g. "claude-sonnet-5-5". */
+  /** Pinned model id, e.g. "claude-opus-5-5". */
   model: string;
   system: string;
   messages: ChatMessage[];
   /** JSON Schema the output must conform to, when the route is typed. */
   jsonSchema?: Record<string, unknown>;
+  /** Tools the model may call. */
+  tools?: ToolSpec[];
   maxTokens?: number;
   temperature?: number;
 }
@@ -121,6 +155,10 @@ export interface GenerateRequest {
 export interface GenerateResponse {
   text: string;
   model: string;
+  /** Present when the model stopped to call tools. */
+  toolCalls?: ToolCall[];
+  /** Provider-specific assistant content to replay on the next turn. */
+  raw?: RawContent;
   usage?: { inputTokens?: number; outputTokens?: number };
 }
 
@@ -142,6 +180,10 @@ export interface ModelRoute<S extends z.ZodType = z.ZodType> {
   temperature?: number;
   /** Max attempts when enforce directives reject. Default 3. */
   maxAttempts?: number;
+  /** Names of bag tools this operation's model may call. Default none. */
+  tools?: string[];
+  /** Max model turns that end in tool calls, per attempt. Default 8. */
+  maxToolTurns?: number;
 }
 
 // ─── Memory ───────────────────────────────────────────────────────────────

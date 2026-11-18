@@ -10,6 +10,7 @@ import {
   defineEval,
   defineRoute,
   defineRule,
+  defineTool,
   pass,
   reject,
   transform,
@@ -47,6 +48,32 @@ export interface ScriptInput {
   classification: BriefClass;
 }
 
+// ─── Tools ────────────────────────────────────────────────────────────────
+
+/** A tiny, deterministic stand-in for a stock-footage catalog. */
+export const FOOTAGE = [
+  { id: "ft-001", tags: ["city", "commute", "train"], aspect: "16:9", seconds: 12 },
+  { id: "ft-002", tags: ["city", "commute", "train"], aspect: "9:16", seconds: 10 },
+  { id: "ft-003", tags: ["office", "laptop", "small business"], aspect: "16:9", seconds: 15 },
+  { id: "ft-004", tags: ["water", "bottle", "product"], aspect: "9:16", seconds: 8 },
+  { id: "ft-005", tags: ["kids", "school", "park"], aspect: "16:9", seconds: 9 },
+] as const;
+
+export const FootageQuery = z.object({
+  query: z.string().describe("Keywords describing the shot, e.g. 'commuters on a train'"),
+  aspect: z.string().describe("Aspect ratio of the video, e.g. '9:16'"),
+});
+
+const footageSearch = defineTool({
+  name: "footage_search",
+  description: "Search licensed stock footage. Returns clip IDs to reference in shot visuals.",
+  input: FootageQuery,
+  run: ({ query, aspect }) => {
+    const words = query.toLowerCase().split(/\W+/).filter(Boolean);
+    return FOOTAGE.filter((c) => c.aspect === aspect && words.some((w) => c.tags.some((t) => t.includes(w))));
+  },
+});
+
 // ─── Routes: a model choice per operation, pinned ─────────────────────────
 
 const routes = [
@@ -60,8 +87,11 @@ const routes = [
   defineRoute({
     operation: "script.write",
     model: "anthropic:claude-opus-5-5",
-    system: "You write shot-by-shot video scripts with voiceover.",
+    system:
+      "You write shot-by-shot video scripts with voiceover. Use footage_search to find stock clips " +
+      "and cite clip IDs in shot visuals where they fit.",
     output: Script,
+    tools: ["footage_search"],
     maxAttempts: 3,
   }),
 ];
@@ -106,6 +136,25 @@ const rules = [
     },
     authoredBy: "domain-expert",
     editableIn: "stable",
+  }),
+
+  // always + enforce-tool (transform): searches always use the brief's aspect ratio.
+  defineRule<ScriptInput>({
+    id: "footage-matches-aspect",
+    title: "Footage searches use the video's aspect ratio",
+    operations: ["script.write"],
+    condition: { kind: "always" },
+    directive: {
+      kind: "enforce-tool",
+      tool: "footage_search",
+      check: (args, ctx) => {
+        const aspect = normalizeAspect(ctx.input.classification.aspect);
+        const a = args as z.infer<typeof FootageQuery>;
+        return aspect && a.aspect !== aspect ? transform({ ...a, aspect }) : pass();
+      },
+    },
+    authoredBy: "engineer",
+    editableIn: "code",
   }),
 
   // always + enforce (reject → retry): total duration within ±10% of target.
@@ -199,6 +248,7 @@ export default defineBag({
   description: "Classify a video brief, then write a shot list with voiceover.",
   routes,
   rules,
+  tools: [footageSearch],
   memory: {
     policy: { org: "review", group: "review", user: "auto" },
     seed: [{ scope: "org", key: "brand.voice", value: "Warm, direct, a little wry." }],

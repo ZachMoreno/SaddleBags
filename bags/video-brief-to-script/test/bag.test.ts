@@ -59,4 +59,19 @@ describe("video-brief-to-script bag", () => {
     const report = await runEvals(h, { judges: [provider] });
     expect(report.passRate).toBe(1);
   });
+
+  it("lets the writer search footage, forcing the brief's aspect ratio", async () => {
+    const provider = new MockProvider("anthropic", (req, i) => {
+      if (req.system.startsWith("You decide")) return '{"ruleIds": []}';
+      if (!req.messages.some((m) => m.role === "tool")) {
+        return { toolCalls: [{ id: "t1", name: "footage_search", args: { query: "commute train", aspect: "16:9" } }] };
+      }
+      return JSON.stringify({ title: "t", aspect: "9:16", shots: shots(10, 3) });
+    });
+    const h = new Harness({ bag, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
+    const { trace } = await h.run<Script>("script.write", input(30), { scope: { orgId: "o" } });
+    const call = trace.attempts[0]!.toolCalls![0]!;
+    expect(call.args).toEqual({ query: "commute train", aspect: "9:16" });
+    expect((call.result as Array<{ id: string }>).map((c) => c.id)).toEqual(["ft-002"]);
+  });
 });

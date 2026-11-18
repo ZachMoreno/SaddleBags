@@ -80,8 +80,13 @@ const { output, trace } = await harness.run("script.write", { brief, classificat
 });
 
 trace.fired;    // [{ ruleId: "long-form-pacing", reason: "predicate" }, ...]
-trace.attempts; // every attempt, with any enforce rejections
+trace.attempts; // every attempt: tool calls, results and enforce rejections
 ```
+
+Routes choose which bag tools their model may call. The runtime runs the tool
+loop: it validates arguments, applies `enforce-tool` rules (transform or
+block), runs the tool and feeds results back until the model answers. Failed
+calls go back to the model as errors instead of crashing the operation.
 
 ## Packages
 

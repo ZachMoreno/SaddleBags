@@ -116,6 +116,128 @@ describe("Harness", () => {
   });
 });
 
+describe("Harness tool loop", () => {
+  const toolBag = defineBag({
+    name: "tool-bag",
+    version: "1.0.0",
+    tools: [
+      {
+        name: "add",
+        description: "Add two numbers",
+        input: z.object({ a: z.number(), b: z.number() }),
+        run: ({ a, b }: { a: number; b: number }) => ({ sum: a + b }),
+      },
+      { name: "secret", description: "Not offered", input: z.object({}), run: () => "s3cret" },
+      {
+        name: "boom",
+        description: "Throws",
+        input: z.object({}),
+        run: () => {
+          throw new Error("kaboom");
+        },
+      },
+    ],
+    routes: [
+      {
+        operation: "calc",
+        model: "mock:m",
+        output: z.object({ answer: z.number() }),
+        tools: ["add", "boom"],
+        maxToolTurns: 3,
+      },
+    ],
+    rules: [
+      {
+        id: "no-negatives",
+        condition: { kind: "always" },
+        directive: {
+          kind: "enforce-tool",
+          tool: "add",
+          check: (args) => ((args as { a: number }).a < 0 ? reject("negative a") : pass()),
+        },
+      },
+      {
+        id: "double-b",
+        condition: { kind: "always" },
+        directive: {
+          kind: "enforce-tool",
+          tool: "add",
+          check: (args) => {
+            const a = args as { a: number; b: number };
+            return a.b === 100 ? { action: "transform", value: { ...a, b: 200 } } : pass();
+          },
+        },
+      },
+    ],
+  });
+
+  it("offers only the route's tools, runs calls, and feeds results back", async () => {
+    const p = new MockProvider("mock", (_req, i) =>
+      i === 0
+        ? { toolCalls: [{ id: "c1", name: "add", args: { a: 2, b: 3 } }] }
+        : '{"answer": 5}',
+    );
+    const h = new Harness({ bag: toolBag, providers: [p] });
+    const { output, trace } = await h.run<{ answer: number }>("calc", "2+3?", { scope });
+
+    expect(output.answer).toBe(5);
+    expect(p.calls[0]!.tools!.map((t) => t.name)).toEqual(["add", "boom"]);
+    expect(p.calls[0]!.tools![0]!.inputSchema).toMatchObject({ type: "object" });
+    const second = p.calls[1]!.messages;
+    expect(second[1]).toMatchObject({ role: "assistant", toolCalls: [{ id: "c1", name: "add" }] });
+    expect(second[2]).toEqual({ role: "tool", results: [{ callId: "c1", name: "add", content: '{"sum":5}', isError: false }] });
+    expect(trace.attempts[0]!.toolCalls).toEqual([{ id: "c1", name: "add", args: { a: 2, b: 3 }, result: { sum: 5 } }]);
+  });
+
+  it("returns blocks, bad args, unoffered tools and thrown errors to the model as errors", async () => {
+    const p = new MockProvider("mock", (_req, i) =>
+      i === 0
+        ? {
+            toolCalls: [
+              { id: "c1", name: "add", args: { a: -1, b: 1 } },
+              { id: "c2", name: "add", args: { a: "x" } },
+              { id: "c3", name: "secret", args: {} },
+              { id: "c4", name: "boom", args: {} },
+            ],
+          }
+        : '{"answer": 0}',
+    );
+    const h = new Harness({ bag: toolBag, providers: [p] });
+    const { trace } = await h.run("calc", "", { scope });
+    const [blocked, invalid, unoffered, thrown] = trace.attempts[0]!.toolCalls!;
+
+    expect(blocked).toMatchObject({ blockedBy: "no-negatives", error: expect.stringContaining("negative a") });
+    expect(invalid!.error).toMatch(/Invalid arguments/);
+    expect(unoffered!.error).toMatch(/not available/);
+    expect(thrown!.error).toBe("kaboom");
+    const results = (p.calls[1]!.messages[2] as { results: Array<{ isError: boolean }> }).results;
+    expect(results.every((r) => r.isError)).toBe(true);
+  });
+
+  it("applies enforce-tool transforms before running and records the executed args", async () => {
+    const p = new MockProvider("mock", (_req, i) =>
+      i === 0 ? { toolCalls: [{ id: "c1", name: "add", args: { a: 1, b: 100 } }] } : '{"answer": 201}',
+    );
+    const { trace } = await new Harness({ bag: toolBag, providers: [p] }).run("calc", "", { scope });
+    expect(trace.attempts[0]!.toolCalls![0]).toMatchObject({ args: { a: 1, b: 200 }, result: { sum: 201 } });
+  });
+
+  it("fails loudly when the model exceeds maxToolTurns", async () => {
+    const p = new MockProvider("mock", () => ({ toolCalls: [{ id: "c", name: "add", args: { a: 1, b: 1 } }] }));
+    const h = new Harness({ bag: toolBag, providers: [p] });
+    await expect(h.run("calc", "", { scope })).rejects.toThrow(/exceeded 3 tool turns/);
+    expect(p.calls).toHaveLength(4);
+    expect(h.store.listTraces("calc")[0]!.ok).toBe(false);
+  });
+
+  it("rejects routes that offer unknown tools", async () => {
+    const bad = defineBag({ ...toolBag, routes: [{ operation: "x", model: "mock:m", tools: ["nope"] }] });
+    await expect(
+      new Harness({ bag: bad, providers: [new MockProvider("mock", () => "")] }).run("x", "", { scope }),
+    ).rejects.toThrow(/unknown tool "nope"/);
+  });
+});
+
 describe("Memory", () => {
   it("applies the write policy per scope and merges narrower scopes over broader ones", async () => {
     const store = new SqliteStore();

@@ -19,6 +19,17 @@ export interface Install {
   updatedAt: string;
 }
 
+export interface ToolCallRecord {
+  id: string;
+  name: string;
+  /** Arguments as executed (after any enforce-tool transforms). */
+  args: unknown;
+  result?: unknown;
+  error?: string;
+  /** The enforce-tool rule that blocked the call, if any. */
+  blockedBy?: string;
+}
+
 export interface TraceRecord {
   id: string;
   operation: string;
@@ -27,7 +38,11 @@ export interface TraceRecord {
   scope: string;
   model: string;
   fired: Array<{ ruleId: string; reason: string }>;
-  attempts: Array<{ output: unknown; rejections: Array<{ ruleId: string; reason: string }> }>;
+  attempts: Array<{
+    output: unknown;
+    rejections: Array<{ ruleId: string; reason: string }>;
+    toolCalls?: ToolCallRecord[];
+  }>;
   ok: boolean;
   createdAt: string;
 }

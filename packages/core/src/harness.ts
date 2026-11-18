@@ -3,17 +3,21 @@ import type {
   Bag,
   ChatMessage,
   EnforceResult,
+  GenerateResponse,
   ModelProvider,
   ModelRoute,
   OperationContext,
   Rule,
   ScopeRef,
   StepRecord,
+  ToolCall,
+  ToolResult,
+  ToolSpec,
 } from "@saddlebags/sdk";
 import { extractJson } from "./json.js";
 import { Memory } from "./memory.js";
 import { assertOverlayRule, selectRules, type FiredRule, type RuleSelector } from "./rules.js";
-import { SqliteStore, type Store, type TraceRecord } from "./store.js";
+import { SqliteStore, type Store, type ToolCallRecord, type TraceRecord } from "./store.js";
 
 export interface HarnessOptions {
   bag: Bag;
@@ -43,6 +47,17 @@ export class HarnessError extends Error {
   ) {
     super(message);
     this.name = "HarnessError";
+  }
+}
+
+export class ToolBlockedError extends Error {
+  constructor(
+    public tool: string,
+    public ruleId: string,
+    reason: string,
+  ) {
+    super(`Tool "${tool}" blocked by [${ruleId}]: ${reason}`);
+    this.name = "ToolBlockedError";
   }
 }
 
@@ -87,28 +102,59 @@ export class Harness {
     const fired = await selectRules(this.rules, ctx, this.selector);
     const system = assembleSystem(route, fired, ctx);
     const jsonSchema = route.output ? (z.toJSONSchema(route.output) as Record<string, unknown>) : undefined;
+    const tools = this.toolSpecs(route);
     const messages: ChatMessage[] = [{ role: "user", content: render(input) }];
     const attempts: TraceRecord["attempts"] = [];
     const maxAttempts = route.maxAttempts ?? 3;
+    const maxToolTurns = route.maxToolTurns ?? 8;
 
     for (let i = 0; i < maxAttempts; i++) {
-      const res = await provider.generate({
-        model,
-        system,
-        messages,
-        jsonSchema,
-        maxTokens: route.maxTokens,
-        temperature: route.temperature,
-      });
+      const toolCalls: ToolCallRecord[] = [];
+      let res!: GenerateResponse;
+
+      // The tool loop: keep going while the model asks for tools.
+      for (let turn = 0; ; turn++) {
+        res = await provider.generate({
+          model,
+          system,
+          messages,
+          jsonSchema,
+          tools: tools.length ? tools : undefined,
+          maxTokens: route.maxTokens,
+          temperature: route.temperature,
+        });
+        if (!res.toolCalls?.length) break;
+
+        if (turn >= maxToolTurns) {
+          attempts.push({ output: undefined, rejections: [], toolCalls });
+          const trace = this.saveTrace(operation, route.model, opts.scope, fired, attempts, false);
+          throw new HarnessError(`Operation "${operation}" exceeded ${maxToolTurns} tool turns`, trace);
+        }
+
+        messages.push({ role: "assistant", content: res.text, toolCalls: res.toolCalls, raw: res.raw });
+        const results: ToolResult[] = [];
+        for (const call of res.toolCalls) {
+          const record = await this.executeToolCall(call, route, fired, ctx);
+          toolCalls.push(record);
+          results.push({
+            callId: call.id,
+            name: call.name,
+            content: record.error ?? serialize(record.result),
+            isError: record.error !== undefined,
+          });
+        }
+        messages.push({ role: "tool", results });
+      }
+
       const { output, rejections } = await this.check(route, res.text, fired, ctx);
-      attempts.push({ output, rejections });
+      attempts.push(toolCalls.length ? { output, rejections, toolCalls } : { output, rejections });
 
       if (rejections.length === 0) {
         const trace = this.saveTrace(operation, route.model, opts.scope, fired, attempts, true);
         return { output: output as O, trace };
       }
       messages.push(
-        { role: "assistant", content: res.text },
+        { role: "assistant", content: res.text, raw: res.raw },
         {
           role: "user",
           content:
@@ -123,20 +169,63 @@ export class Harness {
     throw new HarnessError(`Operation "${operation}" failed enforcement after ${maxAttempts} attempts`, trace);
   }
 
-  /** Run a bag tool, applying any tool-call enforce directives first. */
+  /** Run a bag tool directly, applying any enforce-tool directives first. */
   async callTool(name: string, args: unknown, ctx: OperationContext): Promise<unknown> {
+    const fired = await selectRules(this.rules, ctx, this.selector);
+    return this.runTool(name, args, fired, ctx);
+  }
+
+  private async runTool(name: string, args: unknown, fired: FiredRule[], ctx: OperationContext) {
     const tool = this.bag.tools?.find((t) => t.name === name);
     if (!tool) throw new Error(`Bag ${this.bag.name} has no tool "${name}"`);
     let parsed = tool.input.parse(args);
-    const fired = await selectRules(this.rules, ctx, this.selector);
     for (const { rule } of fired) {
       const d = rule.directive;
       if (d.kind !== "enforce-tool" || d.tool !== name) continue;
       const r = await d.check(parsed, ctx);
-      if (r.action === "reject") throw new Error(`Tool "${name}" blocked by [${rule.id}]: ${r.reason}`);
+      if (r.action === "reject") throw new ToolBlockedError(name, rule.id, r.reason);
       if (r.action === "transform") parsed = tool.input.parse(r.value);
     }
-    return tool.run(parsed, ctx);
+    return { args: parsed, result: await tool.run(parsed, ctx) };
+  }
+
+  /**
+   * One model-requested call. Failures (unknown or unoffered tool, bad
+   * arguments, a block, a thrown error) go back to the model as error results
+   * rather than ending the operation.
+   */
+  private async executeToolCall(
+    call: ToolCall,
+    route: ModelRoute,
+    fired: FiredRule[],
+    ctx: OperationContext,
+  ): Promise<ToolCallRecord> {
+    const record: ToolCallRecord = { id: call.id, name: call.name, args: call.args };
+    if (!route.tools?.includes(call.name)) {
+      record.error = `Tool "${call.name}" is not available for ${route.operation}`;
+      return record;
+    }
+    try {
+      const { args, result } = await this.runTool(call.name, call.args, fired, ctx);
+      record.args = args;
+      record.result = result;
+    } catch (e) {
+      if (e instanceof ToolBlockedError) record.blockedBy = e.ruleId;
+      record.error = e instanceof z.ZodError ? `Invalid arguments: ${z.prettifyError(e)}` : (e as Error).message;
+    }
+    return record;
+  }
+
+  private toolSpecs(route: ModelRoute): ToolSpec[] {
+    return (route.tools ?? []).map((name) => {
+      const tool = this.bag.tools?.find((t) => t.name === name);
+      if (!tool) throw new Error(`Route ${route.operation} offers unknown tool "${name}"`);
+      return {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: z.toJSONSchema(tool.input, { io: "input" }) as Record<string, unknown>,
+      };
+    });
   }
 
   private async check(route: ModelRoute, text: string, fired: FiredRule[], ctx: OperationContext) {
@@ -244,6 +333,10 @@ export function assembleSystem(route: ModelRoute, fired: FiredRule[], ctx: Opera
     );
   }
   return parts.join("\n\n");
+}
+
+function serialize(value: unknown): string {
+  return typeof value === "string" ? value : (JSON.stringify(value) ?? "null");
 }
 
 function render(input: unknown): string {
