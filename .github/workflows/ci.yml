@@ -5,6 +5,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sb
+          POSTGRES_PASSWORD: sb
+          POSTGRES_DB: sb_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Runs the Store contract against a real Postgres as well as PGlite.
+      SADDLEBAGS_TEST_PG_URL: postgres://sb:sb@localhost:5432/sb_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -14,4 +31,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm typecheck
       - run: pnpm test
