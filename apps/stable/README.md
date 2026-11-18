@@ -1,4 +1,4 @@
-# apps/stable — the Stable (milestone 3)
+# apps/stable — the Stable (milestone 4)
 
 The web admin where a mixed team manages its bags. Planned views:
 
@@ -10,3 +10,10 @@ The web admin where a mixed team manages its bags. Planned views:
 - **Library**: pre-baked artifacts awaiting approval.
 
 License: AGPL-3.0-only.
+
+MCP (from milestone 3, §4.11 of the spec) adds:
+
+- **Connections**: connect the MCP servers each bag declares, at org, group or
+  user scope (OAuth or API token).
+- **Drift**: see which bags' pinned MCP tools changed, and re-pin through evals.
+- **API tokens**: mint and revoke scoped tokens for the `/mcp` endpoint.

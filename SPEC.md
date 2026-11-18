@@ -232,6 +232,138 @@ v1 is **multi-provider from day one**. Adapters for **Anthropic, OpenAI and
 Google** sit behind one `ModelProvider` interface, and routes reference
 `provider:model`. Video-model adapters arrive with the rendering bag.
 
+### 4.11 MCP (milestone 3)
+
+SaddleBags speaks the Model Context Protocol in both directions.
+
+- **3rd-party MCP:** the harness is an MCP *client*. Tools from external MCP
+  servers become tools a route can offer its model.
+- **1st-party MCP:** the harness is an MCP *server*. Selected bag operations
+  become MCP tools that any MCP client (Claude Code, Claude Desktop, Cursor,
+  other agents) can call, with the bag's rules, memory and enforcement applied.
+
+Through the essay's lens, an external MCP server is a lever whose behavior
+someone else controls. Its tool descriptions are prose you didn't write, and
+its definitions can change without a line of your code changing. The design
+below puts each of those uncertainties somewhere visible.
+
+#### 4.11.1 3rd-party: bags declare, the Stable connects
+
+**Who** (the essay's third axis) is split deliberately:
+
+| Step | Who | Where |
+|------|-----|-------|
+| Declare that a bag needs a server, and how to reach it | engineers | bag code |
+| Choose which of its tools a route may call | engineers | bag code (route `tools`) |
+| Connect the server and supply credentials | admins | Stable (CLI/API until M4) |
+
+A bag declares its servers:
+
+```ts
+defineBag({
+  // ...
+  mcp: {
+    servers: [
+      {
+        name: "github",
+        description: "Look up issues referenced in a brief",
+        transport: { kind: "http", url: "https://api.githubcopilot.com/mcp/" },
+        auth: "oauth",                       // "oauth" | "token" | "none"
+        connectAt: ["org", "user"],          // scopes allowed to hold a connection
+      },
+      {
+        name: "ffprobe",
+        transport: { kind: "stdio", command: "npx", args: ["-y", "@acme/ffprobe-mcp"] },
+        auth: "none",
+        optional: true,                      // operation still runs if not connected
+      },
+    ],
+  },
+  routes: [
+    { operation: "script.write", /* ... */ tools: ["footage_search", "github.search_issues"] },
+  ],
+});
+```
+
+- **Naming.** MCP tools are named `<server>.<tool>` in bag code. Model-facing
+  names use `<server>__<tool>`, because providers restrict tool-name
+  characters.
+- **Same rules as bag tools.** An MCP tool goes through exactly the same
+  path as a bag tool (§4.3.1). The route must list it explicitly, so there
+  are no wildcards. Its arguments are validated against its advertised JSON
+  Schema, `enforce-tool` directives can transform or block the call, and
+  errors go back to the model. The trace records the call with the server
+  name and the connection's scope.
+- **Connections are scoped like memory.** A connection can be held at any
+  scope the declaration allows in `connectAt`. At runtime the **narrowest
+  connection wins**: a user's own GitHub OAuth beats the org's service token.
+  The trace records which connection was used.
+- **Not connected.** If a required server has no connection for the
+  caller's scope, the operation fails before calling the model, with an
+  error that names the server and scope. If the server is `optional`, its
+  tools are left out of that run's offer, and the trace notes the omission.
+- **Credentials** (OAuth tokens and refresh tokens, API tokens) are stored
+  encrypted in the `Store`. They are never placed in context and never
+  written to traces.
+
+#### 4.11.2 Transports: HTTP and stdio, everywhere
+
+- **Streamable HTTP** for remote servers.
+- **stdio** for local servers, in **all deployments, including hosted**.
+  The command always comes from the bag declaration, which engineers own.
+  The Stable can supply env and credentials but never the command.
+- On self-hosted installs, stdio servers run as child processes of the
+  server, restricted to an operator-configured command allowlist.
+- On the **hosted Stable**, stdio servers must run in a per-org sandbox with
+  no shared filesystem, network egress limited to declared hosts, and CPU,
+  memory and time limits. This is a hard requirement for M5 (hosted).
+
+#### 4.11.3 Pinning and drift
+
+An external server changing its tools is like a model update you didn't
+make (essay: "pin model versions where you can, and rerun evals when you
+can't"). SaddleBags pins them:
+
+1. **Pin on promote.** When a bag version is promoted, the runtime records a
+   snapshot of each declared server's `tools/list`: every tool's name,
+   description and input-schema hash. The snapshot is stored with the install.
+2. **Detect at runtime.** Each run compares the live definitions of the tools
+   it offers against the pin. A **description change counts as drift**,
+   because descriptions are prose that steers the model.
+3. **Withhold drifted tools.** A tool that drifted (changed or removed) is
+   withheld from the offer as if not connected. The trace records the drift,
+   and the Stable flags the bag as needing a re-pin.
+4. **Re-pin through evals.** A re-pin runs the bag's evals against the live
+   definitions. If they pass the gate (§4.7), the new snapshot is promoted,
+   following the same RC → promote flow as a bag change.
+
+#### 4.11.4 1st-party: the harness as an MCP server
+
+- **Endpoint:** `apps/server` serves streamable HTTP at `/mcp`.
+- **Opt-in per operation.** A route is exposed only if it sets
+  `mcp: { expose: true }`. Only `latest` bag versions are served, so RCs and
+  unpublished versions never are.
+- **Typed in and out.** An exposed route must declare an `input` zod schema.
+  Its `output` schema, if any, becomes the MCP tool's `outputSchema`, and
+  results are returned as `structuredContent`.
+- **Tool name:** `<bag>__<operation>`, with dots replaced by underscores. For
+  example, `video_brief_to_script__script_write`.
+- **Auth: scoped API tokens.** Admins mint bearer tokens bound to an
+  org/group/user scope (CLI in M3, Stable in M4). The token's scope becomes
+  the run's `ScopeRef`, so memory, connections and rules resolve per caller.
+  Traces record the caller as `mcp:<tokenId>`. OAuth for MCP clients is
+  planned later.
+- **Errors:** a `HarnessError` comes back as an `isError` result carrying
+  the reasons for the final rejection and the trace ID.
+
+#### 4.11.5 Out of scope for M3
+
+- Output guards on MCP tool results (injection filters, size caps). MCP
+  results are treated the same as bag-tool results for now (§10).
+- MCP resources, prompts, sampling and elicitation, in either direction.
+- Exposing the Stable itself, or memory, over MCP.
+- Wildcard tool allowlists (`github.*`).
+
 ## 5. Reference bag: `video-brief-to-script`
 
 This bag proves the platform in the essay's domain, without rendering:
@@ -263,8 +395,9 @@ packages/core           AGPL   runtime, rule engine, memory, store, evals
 packages/providers      AGPL   anthropic / openai / google adapters
 packages/artifacts-s3   AGPL   S3-compatible ArtifactStore
 bags/video-brief-to-script     reference bag
-apps/server             AGPL   HTTP runtime API        (milestone 2)
-apps/stable             AGPL   web admin               (milestone 3)
+packages/mcp            AGPL   MCP client + server adapters        (milestone 3)
+apps/server             AGPL   HTTP runtime API + /mcp endpoint    (milestones 2–3)
+apps/stable             AGPL   web admin                           (milestone 4)
 ```
 
 Tooling: pnpm workspaces, Turborepo, Vitest, TypeScript (ESM, strict),
@@ -278,9 +411,16 @@ Node ≥ 22.
    runner, provider adapters, fs + S3 artifact stores, reference bag.
 2. **M2 — Server + CLI**: HTTP API (`POST /operations/:name`), `saddlebags`
    CLI (`install`, `eval`, `promote`, `unpublish`), Postgres store.
-3. **M3 — Stable**: web admin for prose overlays, memory curation, proposal
-   review, trace explorer, RC → promote flow.
-4. **M4 — Hosted Stable**: managed offering.
+3. **M3 — MCP** (§4.11): `packages/mcp` with an MCP client (bag-declared
+   servers, HTTP + stdio transports, scoped connections, pinning and drift
+   detection) and an MCP server (`/mcp` on `apps/server`, opt-in operations,
+   scoped API tokens). Connections and tokens are managed through the CLI
+   and API until the Stable lands.
+4. **M4 — Stable**: web admin for prose overlays, memory curation, proposal
+   review, trace explorer, RC → promote flow, MCP connections (OAuth flows),
+   API tokens and drift/re-pin.
+5. **M5 — Hosted Stable**: managed offering, including sandboxed stdio MCP
+   servers (§4.11.2).
 
 ## 8. Explicitly out of v1
 
@@ -317,6 +457,19 @@ Node ≥ 22.
 | 18 | Tooling | pnpm + Turborepo + Vitest |
 | 19 | Admin name | **Stable** |
 
+### MCP interview (2026-11-18)
+
+| # | Question | Decision |
+|---|----------|----------|
+| 20 | What "1st-party MCP" means | The harness as an MCP server: bag operations exposed as MCP tools |
+| 21 | Who connects 3rd-party servers | Bags declare, the Stable connects |
+| 22 | Rules on MCP tools | Same as bag tools: route allowlist + `enforce-tool` |
+| 23 | Placement | New M3; Stable moves to M4, hosted to M5 |
+| 24 | Client transports | Streamable HTTP and stdio, everywhere (sandboxed when hosted) |
+| 25 | Connection credentials | Per scope, like memory; the narrowest connection wins |
+| 26 | Tool drift | Pin on promote, detect at runtime, withhold drifted tools, re-pin via evals |
+| 27 | 1st-party exposure + auth | Opt-in operations; Stable-minted API tokens bound to a scope |
+
 ## 10. Open questions
 
 - Should overlays be allowed to *disable* engineer-authored rules, or only
@@ -328,3 +481,10 @@ Node ≥ 22.
   adapter)?
 - What are the eval gate thresholds: absolute pass rate, or no regressions
   vs. baseline? v1 uses no regressions plus a configurable minimum.
+- **MCP:** 3rd-party tool results are untrusted input that goes straight back
+  to the model. Should output guards (injection filters, size caps) become a
+  directive kind, e.g. `enforce-tool-result`?
+- **MCP:** which sandbox technology for hosted stdio servers (gVisor,
+  Firecracker, containers per org)?
+- **MCP:** should drift withhold a tool whose only change is its description,
+  or allow it with a warning? M3 withholds it.
