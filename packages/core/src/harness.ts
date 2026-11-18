@@ -17,7 +17,8 @@ import type {
 import { extractJson } from "./json.js";
 import { Memory } from "./memory.js";
 import { assertOverlayRule, selectRules, type FiredRule, type RuleSelector } from "./rules.js";
-import { SqliteStore, type Store, type ToolCallRecord, type TraceRecord } from "./store.js";
+import { SqliteStore } from "./store/sqlite.js";
+import type { Store, ToolCallRecord, TraceRecord } from "./store/types.js";
 
 export interface HarnessOptions {
   bag: Bag;
@@ -94,7 +95,7 @@ export class Harness {
       operation,
       input,
       scope: opts.scope,
-      memory: this.memory.load(opts.scope),
+      memory: await this.memory.load(opts.scope),
       history: opts.history ?? [],
       meta: opts.meta ?? {},
     };
@@ -127,7 +128,7 @@ export class Harness {
 
         if (turn >= maxToolTurns) {
           attempts.push({ output: undefined, rejections: [], toolCalls });
-          const trace = this.saveTrace(operation, route.model, opts.scope, fired, attempts, false);
+          const trace = await this.saveTrace(operation, route.model, opts.scope, fired, attempts, false);
           throw new HarnessError(`Operation "${operation}" exceeded ${maxToolTurns} tool turns`, trace);
         }
 
@@ -150,7 +151,7 @@ export class Harness {
       attempts.push(toolCalls.length ? { output, rejections, toolCalls } : { output, rejections });
 
       if (rejections.length === 0) {
-        const trace = this.saveTrace(operation, route.model, opts.scope, fired, attempts, true);
+        const trace = await this.saveTrace(operation, route.model, opts.scope, fired, attempts, true);
         return { output: output as O, trace };
       }
       messages.push(
@@ -165,7 +166,7 @@ export class Harness {
       );
     }
 
-    const trace = this.saveTrace(operation, route.model, opts.scope, fired, attempts, false);
+    const trace = await this.saveTrace(operation, route.model, opts.scope, fired, attempts, false);
     throw new HarnessError(`Operation "${operation}" failed enforcement after ${maxAttempts} attempts`, trace);
   }
 
@@ -296,7 +297,7 @@ export class Harness {
     fired: FiredRule[],
     attempts: TraceRecord["attempts"],
     ok: boolean,
-  ): TraceRecord {
+  ): Promise<TraceRecord> {
     return this.store.putTrace({
       operation,
       bag: this.bag.name,

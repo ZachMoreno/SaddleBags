@@ -1,0 +1,28 @@
+{
+  "name": "@saddlebags/store-postgres",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "drizzle"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@saddlebags/core": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9"
+  },
+  "peerDependencies": { "@electric-sql/pglite": ">=0.2.0" },
+  "peerDependenciesMeta": { "@electric-sql/pglite": { "optional": true } },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@saddlebags/sdk": "workspace:*",
+    "drizzle-kit": "^0.31.11"
+  }
+}

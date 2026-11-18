@@ -7,7 +7,7 @@ import {
   type Scope,
   type ScopeRef,
 } from "@saddlebags/sdk";
-import type { MemoryProposal, Store } from "./store.js";
+import type { MemoryProposal, Store } from "./store/types.js";
 
 export interface ProposalOutcome {
   proposal: MemoryProposal;
@@ -43,8 +43,8 @@ export class Memory {
     }
 
     const status = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "pending";
-    const proposal = this.store.addProposal(input, status);
-    this.store.audit({
+    const proposal = await this.store.addProposal(input, status);
+    await this.store.audit({
       actor: actorOf(input),
       action: `memory.propose.${status}`,
       subject: `${input.scope}:${input.scopeId}:${input.key}`,
@@ -52,17 +52,17 @@ export class Memory {
     });
 
     if (status !== "approved") return { proposal };
-    const entry = this.write(input);
+    const entry = await this.write(input);
     return { proposal, entry };
   }
 
   /** A human resolves a pending proposal (in the Stable). */
-  resolve(proposalId: string, approve: boolean, reviewer: string): MemoryEntry | undefined {
-    const p = this.store.getProposal(proposalId);
+  async resolve(proposalId: string, approve: boolean, reviewer: string): Promise<MemoryEntry | undefined> {
+    const p = await this.store.getProposal(proposalId);
     if (!p) throw new Error(`No memory proposal ${proposalId}`);
     if (p.status !== "pending") throw new Error(`Proposal ${proposalId} is already ${p.status}`);
-    this.store.setProposalStatus(proposalId, approve ? "approved" : "rejected");
-    this.store.audit({
+    await this.store.setProposalStatus(proposalId, approve ? "approved" : "rejected");
+    await this.store.audit({
       actor: `human:${reviewer}`,
       action: approve ? "memory.approve" : "memory.reject",
       subject: `${p.scope}:${p.scopeId}:${p.key}`,
@@ -72,12 +72,12 @@ export class Memory {
   }
 
   /** Memory for a scope ref, broadest first. Narrower scopes override by key. */
-  load(ref: ScopeRef): MemoryEntry[] {
+  async load(ref: ScopeRef): Promise<MemoryEntry[]> {
     const byKey = new Map<string, MemoryEntry>();
     for (const scope of SCOPES) {
       const id = scopeId(ref, scope);
       if (!id) continue;
-      for (const e of this.store.listMemory(scope, id)) byKey.set(e.key, e);
+      for (const e of await this.store.listMemory(scope, id)) byKey.set(e.key, e);
     }
     return [...byKey.values()];
   }
@@ -90,7 +90,7 @@ export class Memory {
     }
   }
 
-  private write(p: MemoryProposalInput): MemoryEntry {
+  private write(p: MemoryProposalInput): Promise<MemoryEntry> {
     return this.store.putMemory({ scope: p.scope, scopeId: p.scopeId, key: p.key, value: p.value });
   }
 }
