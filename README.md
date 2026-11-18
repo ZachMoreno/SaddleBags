@@ -97,8 +97,9 @@ calls go back to the model as errors instead of crashing the operation.
 | [`@saddlebags/providers`](packages/providers) | Anthropic, OpenAI and Google adapters | AGPL-3.0 |
 | [`@saddlebags/artifacts-s3`](packages/artifacts-s3) | S3-compatible artifact library | AGPL-3.0 |
 | [`bags/video-brief-to-script`](bags/video-brief-to-script) | Reference bag | MIT |
-| [`apps/server`](apps/server) | HTTP runtime + CLI *(M2)* | AGPL-3.0 |
-| [`apps/stable`](apps/stable) | Web admin *(M3)* | AGPL-3.0 |
+| [`apps/server`](apps/server) | HTTP runtime + CLI *(M2)*, MCP server endpoint *(M3)* | AGPL-3.0 |
+| `packages/mcp` | MCP client + server adapters *(M3)* | AGPL-3.0 |
+| [`apps/stable`](apps/stable) | Web admin *(M4)* | AGPL-3.0 |
 
 ## Develop
 
