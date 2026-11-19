@@ -28,6 +28,8 @@ export interface EvalOptions {
   /** Providers for judge graders (defaults to none: judge graders then fail). */
   judges?: ModelProvider[];
   cases?: EvalCase[];
+  /** Recorded on each run's trace. Default "eval". */
+  caller?: string;
 }
 
 /** Run a bag's golden cases against a harness. */
@@ -39,7 +41,11 @@ export async function runEvals(harness: Harness, opts: EvalOptions = {}): Promis
 
   for (const c of cases) {
     try {
-      const { output } = await harness.run(c.operation, c.input, { scope, meta: { eval: c.id } });
+      const { output } = await harness.run(c.operation, c.input, {
+        scope,
+        meta: { eval: c.id },
+        caller: opts.caller ?? "eval",
+      });
       const graders: GraderResult[] = [];
       for (const g of c.graders) {
         if (g.kind === "code") {

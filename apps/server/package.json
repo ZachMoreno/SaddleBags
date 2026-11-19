@@ -5,9 +5,19 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "bin": { "saddlebags": "./bin/saddlebags.js" },
-  "files": ["dist", "bin"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "saddlebags": "./bin/saddlebags.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -21,9 +31,11 @@
     "@saddlebags/store-postgres": "workspace:*",
     "commander": "^15.1.0",
     "hono": "^4.13.19",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "@saddlebags/mcp": "workspace:*"
   },
   "devDependencies": {
-    "@saddlebags/bag-video-brief-to-script": "workspace:*"
+    "@saddlebags/bag-video-brief-to-script": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.2"
   }
 }

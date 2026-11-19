@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Bag, ModelProvider } from "@saddlebags/sdk";
+import type { Bag, ModelProvider, ScopeRef } from "@saddlebags/sdk";
 
 export type StoreConfig =
   | { kind: "sqlite"; /** Relative to the config file. Default `.saddlebags/saddlebags.db`. */ path?: string }
@@ -19,6 +19,17 @@ export interface SaddlebagsConfig {
   selectorModel?: `${string}:${string}`;
   /** Minimum eval pass rate for promotion. Default 1. */
   minPassRate?: number;
+  /**
+   * The scope evals run as. Default `{ orgId: "eval" }`. Bags with required
+   * MCP servers need a scope that holds connections to them.
+   */
+  evalScope?: ScopeRef;
+  mcp?: {
+    /** Exact commands stdio MCP servers may run. Default none: stdio servers are refused. */
+    stdioAllowlist?: string[];
+    /** How long a server's tool list is reused, in ms. Default 60000. */
+    toolListTtlMs?: number;
+  };
   server?: { port?: number; host?: string };
 }
 

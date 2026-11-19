@@ -8,7 +8,13 @@ export interface ExposedTool {
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  run(args: unknown): Promise<{ text: string; structured?: Record<string, unknown>; isError?: boolean }>;
+  run(args: unknown): Promise<{
+    text: string;
+    structured?: Record<string, unknown>;
+    isError?: boolean;
+    /** Returned as the result's `_meta`, e.g. `{ "saddlebags/traceId": "…" }`. */
+    meta?: Record<string, unknown>;
+  }>;
 }
 
 export interface McpHandlerOptions {
@@ -46,6 +52,7 @@ export async function handleMcpRequest(req: Request, opts: McpHandlerOptions): P
       content: [{ type: "text", text: res.text }],
       ...(res.structured && !res.isError && { structuredContent: res.structured }),
       ...(res.isError && { isError: true }),
+      ...(res.meta && { _meta: res.meta }),
     };
   });
 

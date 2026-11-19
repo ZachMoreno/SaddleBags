@@ -29,6 +29,9 @@ importers:
       '@saddlebags/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@saddlebags/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
       '@saddlebags/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -48,6 +51,9 @@ importers:
         specifier: ^4.1.0
         version: 4.6.7
     devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.2
+        version: 1.32.2(zod@4.6.7)
       '@saddlebags/bag-video-brief-to-script':
         specifier: workspace:*
         version: link:../../bags/video-brief-to-script
