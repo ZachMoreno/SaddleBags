@@ -34,14 +34,33 @@ export interface ExternalToolResolver {
   resolve(bag: Bag, names: string[], ctx: OperationContext): Promise<ExternalToolSet>;
 }
 
-export class McpNotConnectedError extends Error {
+/** A required MCP server can't supply tools for this run. The operation fails before calling the model. */
+export class McpResolveError extends Error {
   constructor(
     public server: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "McpResolveError";
+  }
+}
+
+export class McpNotConnectedError extends McpResolveError {
+  constructor(
+    server: string,
     public scopes: Array<{ scope: Scope; scopeId: string }>,
   ) {
     const where = scopes.map((s) => `${s.scope}:${s.scopeId}`).join(", ") || "any allowed scope";
-    super(`MCP server "${server}" is not connected for ${where}`);
+    super(server, `MCP server "${server}" is not connected for ${where}`);
     this.name = "McpNotConnectedError";
+  }
+}
+
+/** The server is connected but couldn't be reached or listed. */
+export class McpUnavailableError extends McpResolveError {
+  constructor(server: string, cause: unknown) {
+    super(server, `MCP server "${server}" is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "McpUnavailableError";
   }
 }
 

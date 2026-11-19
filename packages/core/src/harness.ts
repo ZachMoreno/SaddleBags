@@ -15,7 +15,7 @@ import type {
   ToolSpec,
 } from "@saddlebags/sdk";
 import {
-  McpNotConnectedError,
+  McpResolveError,
   isMcpToolName,
   modelToolName,
   type ExternalTool,
@@ -153,7 +153,7 @@ export class Harness {
     try {
       offered = await this.offerTools(route, ctx, meta.notes);
     } catch (e) {
-      if (!(e instanceof McpNotConnectedError)) throw e;
+      if (!(e instanceof McpResolveError)) throw e;
       meta.notes.push({ kind: "mcp.omitted", server: e.server, detail: `${e.message}; the server is required` });
       throw new HarnessError(e.message, await this.saveTrace(meta, attempts, false));
     }
