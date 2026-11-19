@@ -12,7 +12,20 @@ pnpm build
 pnpm test
 ```
 
-Node ≥ 22.13 is required: the default store uses the built-in `node:sqlite`.
+Node ≥ 22.18 is required: the default store uses the built-in `node:sqlite`,
+and `saddlebags.config.ts` is imported with Node's built-in type stripping.
+
+The Store contract runs on SQLite and in-process Postgres (PGlite) by default.
+To also run it against a real Postgres server, as CI does:
+
+```sh
+SADDLEBAGS_TEST_PG_URL=postgres://user:pass@localhost:5432/db pnpm test
+```
+
+After changing a store schema, update **both** dialects
+(`packages/core/src/store/schema-sqlite.ts` and
+`packages/store-postgres/src/schema.ts`) and run `pnpm db:generate` in each
+package.
 
 ## Licensing
 

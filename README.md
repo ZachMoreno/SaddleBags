@@ -14,7 +14,7 @@ every operation carries uncertainty, and the design question is **what**
 resolves it (code or model), **when** (pre-baked or live) and **who** can
 change it. SaddleBags makes each of those placements explicit.
 
-> Status: early. M1 (core + SDK) is in progress. See [SPEC.md](./SPEC.md).
+> Status: early. M1 (core + SDK) is done; M2 (server, CLI, Postgres) is in review. See [SPEC.md](./SPEC.md).
 
 ## Rules = condition + directive
 
@@ -97,7 +97,8 @@ calls go back to the model as errors instead of crashing the operation.
 | [`@saddlebags/providers`](packages/providers) | Anthropic, OpenAI and Google adapters | AGPL-3.0 |
 | [`@saddlebags/artifacts-s3`](packages/artifacts-s3) | S3-compatible artifact library | AGPL-3.0 |
 | [`bags/video-brief-to-script`](bags/video-brief-to-script) | Reference bag | MIT |
-| [`apps/server`](apps/server) | HTTP runtime + CLI *(M2)*, MCP server endpoint *(M3)* | AGPL-3.0 |
+| [`@saddlebags/store-postgres`](packages/store-postgres) | Postgres store (Drizzle) | AGPL-3.0 |
+| [`@saddlebags/server`](apps/server) | HTTP runtime + `saddlebags` CLI; MCP server endpoint *(M3)* | AGPL-3.0 |
 | `packages/mcp` | MCP client + server adapters *(M3)* | AGPL-3.0 |
 | [`apps/stable`](apps/stable) | Web admin *(M4)* | AGPL-3.0 |
 

@@ -72,7 +72,7 @@ describe("Harness", () => {
 
     const bad = new Harness({ bag, providers: [new MockProvider("mock", () => '{"n": 0}')] });
     await expect(bad.run("typed", {}, { scope })).rejects.toBeInstanceOf(HarnessError);
-    expect(bad.store.listTraces("typed")[0]!.ok).toBe(false);
+    expect((await bad.store.listTraces({ operation: "typed" }))[0]!.ok).toBe(false);
   });
 
   it("treats schema failures as rejections", async () => {
@@ -227,7 +227,7 @@ describe("Harness tool loop", () => {
     const h = new Harness({ bag: toolBag, providers: [p] });
     await expect(h.run("calc", "", { scope })).rejects.toThrow(/exceeded 3 tool turns/);
     expect(p.calls).toHaveLength(4);
-    expect(h.store.listTraces("calc")[0]!.ok).toBe(false);
+    expect((await h.store.listTraces({ operation: "calc" }))[0]!.ok).toBe(false);
   });
 
   it("rejects routes that offer unknown tools", async () => {
@@ -248,17 +248,17 @@ describe("Memory", () => {
 
     const org = await mem.propose({ scope: "org", scopeId: "acme", key: "tone", value: "formal", source: model });
     expect(org.entry).toBeUndefined();
-    expect(store.listProposals("pending")).toHaveLength(1);
+    expect(await store.listProposals("pending")).toHaveLength(1);
 
     await mem.propose({ scope: "group", scopeId: "brand", key: "x", value: "nope!", source: model });
-    expect(store.listProposals("rejected")).toHaveLength(1);
+    expect(await store.listProposals("rejected")).toHaveLength(1);
 
     await mem.propose({ scope: "user", scopeId: "u1", key: "tone", value: "casual", source: model });
-    mem.resolve(org.proposal.id, true, "reviewer");
+    await mem.resolve(org.proposal.id, true, "reviewer");
 
-    const loaded = mem.load(scope);
+    const loaded = await mem.load(scope);
     expect(loaded.find((m) => m.key === "tone")?.value).toBe("casual");
-    expect(store.listAudit().map((a) => a.action)).toContain("memory.approve");
+    expect((await store.listAudit()).map((a) => a.action)).toContain("memory.approve");
   });
 
   it("defaults unspecified scopes to review", () => {
@@ -274,21 +274,39 @@ describe("Lifecycle", () => {
     cases: passes.map((pass, i) => ({ caseId: `c${i}`, pass, graders: [] })),
   });
 
-  it("blocks promotion on regressions and promotes otherwise", () => {
+  it("blocks promotion on regressions and promotes otherwise", async () => {
     const store = new SqliteStore();
     const lc = new Lifecycle(store);
-    lc.installRc("b", "1.0.0", "ci");
-    expect(lc.promote("b", report("1.0.0", [true, true]), "ci").ok).toBe(true);
-    expect(lc.latest("b")).toBe("1.0.0");
+    await lc.installRc("b", "1.0.0", "ci");
+    expect((await lc.promote("b", report("1.0.0", [true, true]), "ci")).ok).toBe(true);
+    expect(await lc.latest("b")).toBe("1.0.0");
 
-    lc.installRc("b", "1.1.0", "ci");
-    const gate = lc.promote("b", report("1.1.0", [true, false]), "ci", {
+    await lc.installRc("b", "1.1.0", "ci");
+    const gate = await lc.promote("b", report("1.1.0", [true, false]), "ci", {
       baseline: report("1.0.0", [true, true]),
       minPassRate: 0.5,
     });
     expect(gate.ok).toBe(false);
     expect(gate.regressions).toEqual(["c1"]);
-    expect(lc.latest("b")).toBe("1.0.0");
+    expect(await lc.latest("b")).toBe("1.0.0");
+  });
+
+  it("promotes from stored eval runs against the current latest", async () => {
+    const store = new SqliteStore();
+    const lc = new Lifecycle(store);
+    expect((await lc.promoteFromStore("b", "1.0.0", "ci")).reasons[0]).toMatch(/No eval run/);
+
+    await store.putEvalRun(report("1.0.0", [true, true]));
+    expect((await lc.promoteFromStore("b", "1.0.0", "ci")).ok).toBe(true);
+
+    await store.putEvalRun(report("1.1.0", [true, false]));
+    const blocked = await lc.promoteFromStore("b", "1.1.0", "ci", { minPassRate: 0.5 });
+    expect(blocked.regressions).toEqual(["c1"]);
+
+    await store.putEvalRun(report("1.1.0", [true, true]));
+    expect((await lc.promoteFromStore("b", "1.1.0", "ci")).ok).toBe(true);
+    expect(await lc.latest("b")).toBe("1.1.0");
+    expect(await lc.channelOf("b", "1.0.0")).toBe("unpublished");
   });
 
   it("gates on minimum pass rate", () => {
