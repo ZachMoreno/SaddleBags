@@ -36,6 +36,8 @@ export default defineConfig({
   providers: "env",                       // ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
   selectorModel: "anthropic:claude-opus-5-5",
   minPassRate: 1,
+  evalScope: { orgId: "acme" },            // the scope evals run as (needs MCP connections, if any)
+  mcp: { stdioAllowlist: ["npx"] },        // exact commands stdio MCP servers may run; default none
   server: { port: 4848 },
 });
 ```
@@ -53,11 +55,51 @@ export default defineConfig({
 With `SADDLEBAGS_TOKEN` set, every route except `/health` needs
 `Authorization: Bearer <token>`. Without it, `serve` binds localhost only.
 
-## Milestone 3: MCP endpoint
+## MCP (§4.11 of the spec)
 
-`/mcp` (streamable HTTP) will serve every route marked `mcp: { expose: true }`
-from `latest` bag versions as an MCP tool. Callers will authenticate with scoped
-bearer tokens (`saddlebags token create --org acme --user dana`). See §4.11 of
-the spec.
+### Using 3rd-party MCP servers in a bag
+
+A bag declares the servers it needs; routes list the exact tools they offer.
+
+```ts
+defineBag({
+  mcp: {
+    servers: [
+      { name: "github", transport: { kind: "http", url: "https://api.githubcopilot.com/mcp/" },
+        auth: "token", connectAt: ["org", "user"] },
+    ],
+  },
+  routes: [{ operation: "brief.research", model: "anthropic:claude-opus-5-5", tools: ["github.search_issues"] }],
+});
+```
+
+An admin connects it, per scope. The narrowest connection wins at runtime.
+
+```sh
+export SADDLEBAGS_SECRET_KEY=$(openssl rand -hex 32)   # keep it: it decrypts stored credentials
+GITHUB_TOKEN=... npx saddlebags mcp connect @acme/research-bag github --org acme --token-env GITHUB_TOKEN
+npx saddlebags eval @acme/research-bag --org acme       # evals need a scope with connections
+npx saddlebags promote @acme/research-bag               # also pins the server's tool definitions
+npx saddlebags mcp drift @acme/research-bag             # changed tools are withheld until...
+npx saddlebags mcp repin @acme/research-bag --org acme  # ...a re-pin passes evals
+```
+
+stdio servers only run if their exact command is in `mcp.stdioAllowlist` in
+the config.
+
+### Serving your operations over /mcp
+
+Routes opt in with `mcp: { expose: true }` and an object `input` schema. Only
+`latest` versions are served. Mint a token bound to a scope, then point any MCP
+client at `http://<host>:4848/mcp`:
+
+```sh
+npx saddlebags token create --name claude-code --org acme --user dana
+claude mcp add --transport http saddlebags http://localhost:4848/mcp \
+  --header "Authorization: Bearer sbt_..."
+```
+
+The token's scope is the caller's scope for memory, rules and MCP
+connections, and traces record the caller as `mcp:<tokenId>`.
 
 License: AGPL-3.0-only.

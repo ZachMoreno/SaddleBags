@@ -365,7 +365,41 @@ can't"). SaddleBags pins them:
 - **Errors:** a `HarnessError` comes back as an `isError` result carrying
   the reasons for the final rejection and the trace ID.
 
-#### 4.11.5 Out of scope for M3
+#### 4.11.5 How M3 implements it
+
+- **Packages.** `@saddlebags/mcp` holds the client (`Connections`,
+  `ClientPool`, `McpToolResolver`), `ApiTokens` and the stateless request
+  handler. Core only knows an `ExternalToolResolver` interface, so the
+  harness treats MCP tools exactly like bag tools.
+- **Credentials** are sealed with AES-256-GCM using `SADDLEBAGS_SECRET_KEY`
+  (32 bytes, `openssl rand -hex 32`). Each ciphertext is bound to its
+  connection (bag, server, scope, scope ID), so a row copied elsewhere won't
+  decrypt. HTTP servers get `Authorization: Bearer <credential>`; stdio
+  servers get it in the env var the declaration names (`transport.tokenEnv`).
+  The CLI reads credentials from an env var or stdin, never from argv, and
+  no list endpoint returns them.
+- **OAuth in M3.** `auth: "oauth"` servers are connected with an access
+  token obtained elsewhere; there's no refresh yet. Interactive OAuth
+  flows arrive with the Stable (M4).
+- **Unreachable servers.** A required server that can't be reached, listed,
+  or whose credential can't be decrypted fails the operation before the
+  model is called, like an unconnected one. An optional server's tools are
+  left out with a note.
+- **Unpinned versions.** An RC (or any version not yet promoted) has no pin,
+  so runs use live definitions and the trace notes `mcp.unpinned`. Evals
+  therefore test the definitions that promotion then pins.
+- **Tool lists** are cached per connection for `config.mcp.toolListTtlMs`
+  (default 60s), so drift is detected within that window.
+- **stdio allowlist.** `config.mcp.stdioAllowlist` lists exact commands.
+  It's empty by default, which refuses every stdio server.
+- **Evals and connections.** Evals run as `config.evalScope` (default
+  `{ orgId: "eval" }`, overridable with `--org/--group/--user`). A bag with
+  required MCP servers needs that scope to hold connections.
+- **/mcp** is stateless streamable HTTP with JSON responses. Each request
+  gets a fresh MCP server built for the token's scope. Successful results
+  carry the trace ID in `_meta["saddlebags/traceId"]`.
+
+#### 4.11.6 Out of scope for M3
 
 - Output guards on MCP tool results (injection filters, size caps). MCP
   results are treated the same as bag-tool results for now (§10).
@@ -395,11 +429,15 @@ aliases) is future work.
 | `POST /operations/:name` | `{ input, scope, bag?, channel?, history?, meta? }` → `{ output, traceId }`; `422` with the rejections and trace ID when enforcement fails |
 | `GET /traces`, `GET /traces/:id` | What fired, why, and every attempt |
 | `GET /memory/proposals`, `POST /memory/proposals/:id/{approve,reject}` | Memory review |
-| `GET /bags`, `POST /bags/:name/{evals,promote,unpublish}` | Releases (URL-encode scoped names) |
+| `GET /bags`, `POST /bags/:name/{evals,promote,unpublish,repin}` | Releases (URL-encode scoped names); promote and repin record MCP pins |
+| `GET /bags/:name/mcp/drift` | Pinned MCP tools whose live definitions changed |
+| `GET/POST /mcp/connections`, `DELETE /mcp/connections/:id` | MCP connections (credentials are write-only) |
+| `GET/POST /tokens`, `DELETE /tokens/:id` | Scoped API tokens for `/mcp` (shown once, at creation) |
+| `POST /mcp` | The 1st-party MCP endpoint (§4.11.4), authenticated by a scoped token |
 
 **Auth.** With `SADDLEBAGS_TOKEN` set, every route except `/health` requires
 `Authorization: Bearer <token>`. Without it, the server refuses to bind
-anything but localhost. Scoped tokens arrive with M3 (§4.11.4).
+anything but localhost. `/mcp` takes scoped API tokens instead (§4.11.4).
 
 **CLI**
 
@@ -412,6 +450,10 @@ anything but localhost. Scoped tokens arrive with M3 (§4.11.4).
 | `promote <bag>` | Promote the installed version to `latest` if its latest eval run clears the gate against the current `latest` |
 | `unpublish <bag> <version>` | Stop serving a version |
 | `status`, `traces`, `memory proposals/approve/reject` | Inspect and review |
+| `mcp connect <bag> <server> --org/--group/--user <id> [--token-env VAR \| --token-stdin]` | Connect a declared MCP server at one scope |
+| `mcp connections`, `mcp disconnect <id>` | List or remove connections |
+| `mcp drift <bag>`, `mcp repin <bag>` | Show drift; re-pin through evals (§4.11.3) |
+| `token create --name --org [--group] [--user]`, `token list`, `token revoke <id>` | Scoped tokens for `/mcp` |
 | `serve [--port] [--host]` | Start the HTTP API (default `127.0.0.1:4848`) |
 
 ## 5. Reference bag: `video-brief-to-script`

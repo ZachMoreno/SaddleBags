@@ -19,6 +19,7 @@ async function project(opts: { evalPasses?: boolean } = {}) {
       name: "@acme/echo-bag",
       version: "2.0.0",
       routes: [{ operation: "echo", model: "mock:m" }],
+      mcp: { servers: [{ name: "wiki", transport: { kind: "http", url: "http://wiki.invalid/mcp" }, auth: "token", connectAt: ["org", "user"], optional: true }] },
       memory: { policy: {}, seed: [{ scope: "org", key: "voice", value: "warm" }] },
       evals: [{ id: "e1", operation: "echo", input: "hi",
         graders: [{ kind: "code", name: "says-hi", assert: (o) => o === "hi" || "said " + o }] }],
@@ -141,6 +142,54 @@ describe("saddlebags CLI", () => {
     const c = cli(empty);
     expect(await c.run("status")).toBe(1);
     expect(c.err.at(-1)).toMatch(/saddlebags init/);
+  });
+});
+
+describe("saddlebags CLI: MCP connections and tokens", () => {
+  it("connects with a credential from env or stdin, never printing it", async () => {
+    const root = await project();
+    const env = { SADDLEBAGS_SECRET_KEY: "d".repeat(64), WIKI_TOKEN: "wiki-secret" };
+    const c = cli(root, { env, readStdin: async () => "stdin-secret\n" });
+
+    expect(await c.run("mcp", "connect", "@acme/echo-bag", "wiki", "--org", "acme", "--token-env", "WIKI_TOKEN")).toBe(0);
+    expect(await c.run("mcp", "connect", "@acme/echo-bag", "wiki", "--user", "dana", "--token-stdin")).toBe(0);
+    expect(await c.run("mcp", "connect", "@acme/echo-bag", "wiki", "--org", "a", "--user", "b", "--token-env", "WIKI_TOKEN")).toBe(1);
+    expect(c.err.at(-1)).toMatch(/exactly one of --org, --group or --user/);
+    expect(await c.run("mcp", "connect", "@acme/echo-bag", "wiki", "--group", "g", "--token-env", "WIKI_TOKEN")).toBe(1);
+    expect(c.err.at(-1)).toMatch(/org, user, not group/);
+
+    c.out.length = 0;
+    await c.run("mcp", "connections");
+    expect(c.out).toHaveLength(2);
+    expect(c.out.join("\n")).toMatch(/@acme\/echo-bag:wiki {2}org:acme {2}credential/);
+    expect(c.out.join("\n")).not.toMatch(/secret/);
+
+    const id = c.out[0]!.split(" ")[0]!;
+    expect(await c.run("mcp", "disconnect", id)).toBe(0);
+    expect(await c.run("mcp", "disconnect", id)).toBe(1);
+
+    // Without the key, credentials can't be stored.
+    const noKey = cli(root, { env: { WIKI_TOKEN: "x" } });
+    expect(await noKey.run("mcp", "connect", "@acme/echo-bag", "wiki", "--org", "acme", "--token-env", "WIKI_TOKEN")).toBe(1);
+    expect(noKey.err.at(-1)).toMatch(/SADDLEBAGS_SECRET_KEY/);
+  });
+
+  it("creates, lists and revokes scoped tokens", async () => {
+    const c = cli(await project());
+    expect(await c.run("token", "create", "--name", "claude-code", "--org", "acme", "--user", "dana")).toBe(0);
+    const secret = c.out.at(-1)!;
+    expect(secret).toMatch(/^sbt_[0-9a-f]{12}_/);
+    const id = secret.split("_")[1]!;
+
+    c.out.length = 0;
+    await c.run("token", "list");
+    expect(c.out[0]).toMatch(new RegExp(`${id} {2}claude-code {2}\\{"orgId":"acme","userId":"dana"\\} {2}active`));
+    expect(c.out.join("\n")).not.toContain(secret);
+
+    expect(await c.run("token", "revoke", id)).toBe(0);
+    expect(await c.run("token", "revoke", id)).toBe(1);
+    expect(await c.run("token", "create", "--name", "x")).toBe(1);
+    expect(c.err.at(-1)).toMatch(/--org is required/);
   });
 });
 

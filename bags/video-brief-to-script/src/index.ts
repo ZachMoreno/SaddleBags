@@ -43,10 +43,11 @@ export const Script = z.object({
 });
 export type Script = z.infer<typeof Script>;
 
-export interface ScriptInput {
-  brief: string;
-  classification: BriefClass;
-}
+export const ScriptInput = z.object({
+  brief: z.string().describe("The video brief, in the client's words"),
+  classification: BriefClass,
+});
+export type ScriptInput = z.infer<typeof ScriptInput>;
 
 // ─── Tools ────────────────────────────────────────────────────────────────
 
@@ -90,9 +91,17 @@ const routes = [
     system:
       "You write shot-by-shot video scripts with voiceover. Use footage_search to find stock clips " +
       "and cite clip IDs in shot visuals where they fit.",
+    input: ScriptInput,
     output: Script,
     tools: ["footage_search"],
     maxAttempts: 3,
+    // Served on /mcp, so agents can request scripts with the house rules applied.
+    mcp: {
+      expose: true,
+      description:
+        "Write a shot-by-shot video script with voiceover from a brief and its classification, " +
+        "applying the team's pacing, duration and aspect-ratio rules.",
+    },
   }),
 ];
 
