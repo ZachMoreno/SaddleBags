@@ -1,17 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy";
-import type { MemoryEntry, MemoryProposalInput, Scope } from "@saddlebags/sdk";
+import type { MemoryEntry, MemoryProposalInput, Scope, ScopeRef } from "@saddlebags/sdk";
 import type { EvalReport } from "../evals.js";
 import * as schema from "./schema-sqlite.js";
 import type {
+  ApiToken,
   AuditEvent,
   Channel,
+  McpConnection,
+  McpPin,
+  PinnedTool,
   EvalRunRecord,
   Install,
   MemoryProposal,
   ProposalStatus,
   Store,
+  TraceNote,
   TraceRecord,
 } from "./types.js";
 
@@ -90,7 +95,7 @@ export abstract class DrizzleStore implements Store {
 
   async putTrace(t: Omit<TraceRecord, "id" | "createdAt">): Promise<TraceRecord> {
     const trace: TraceRecord = { ...t, id: randomUUID(), createdAt: now() };
-    await this.db.insert(this.t.traces).values(trace);
+    await this.db.insert(this.t.traces).values({ ...trace, caller: t.caller ?? null, notes: t.notes ?? null });
     return trace;
   }
 
@@ -158,6 +163,99 @@ export abstract class DrizzleStore implements Store {
     );
   }
 
+  async putConnection(c: Omit<McpConnection, "id" | "createdAt">): Promise<McpConnection> {
+    const mc = this.t.mcpConnections;
+    const createdAt = now();
+    const [row] = await this.db
+      .insert(mc)
+      .values({ id: randomUUID(), ...c, createdAt })
+      .onConflictDoUpdate({
+        target: [mc.bag, mc.server, mc.scope, mc.scopeId],
+        set: { credential: c.credential, createdBy: c.createdBy, createdAt },
+      })
+      .returning();
+    return toConnection(row!);
+  }
+
+  async listConnections(filter: { bag?: string; server?: string } = {}): Promise<McpConnection[]> {
+    const mc = this.t.mcpConnections;
+    const conds = [filter.bag ? eq(mc.bag, filter.bag) : undefined, filter.server ? eq(mc.server, filter.server) : undefined];
+    const rows = await this.db
+      .select()
+      .from(mc)
+      .where(and(...conds))
+      .orderBy(asc(mc.bag), asc(mc.server), asc(mc.scope), asc(mc.scopeId));
+    return rows.map(toConnection);
+  }
+
+  async deleteConnection(id: string): Promise<boolean> {
+    const mc = this.t.mcpConnections;
+    const rows = await this.db.delete(mc).where(eq(mc.id, id)).returning();
+    return rows.length > 0;
+  }
+
+  async setPin(pin: Omit<McpPin, "createdAt">): Promise<void> {
+    const p = this.t.mcpPins;
+    const createdAt = now();
+    await this.db
+      .insert(p)
+      .values({ ...pin, createdAt })
+      .onConflictDoUpdate({ target: [p.bag, p.version, p.server], set: { tools: pin.tools, createdAt } });
+  }
+
+  async listPins(bag: string, version: string): Promise<McpPin[]> {
+    const p = this.t.mcpPins;
+    const rows = await this.db
+      .select()
+      .from(p)
+      .where(and(eq(p.bag, bag), eq(p.version, version)))
+      .orderBy(asc(p.server));
+    return rows.map((r) => ({
+      bag: r.bag,
+      version: r.version,
+      server: r.server,
+      tools: r.tools as PinnedTool[],
+      createdAt: r.createdAt,
+    }));
+  }
+
+  async putApiToken(t: Omit<ApiToken, "createdAt" | "revokedAt">): Promise<ApiToken> {
+    const token: ApiToken = { ...t, createdAt: now(), revokedAt: null };
+    await this.db.insert(this.t.apiTokens).values({
+      id: t.id,
+      name: t.name,
+      orgId: t.scope.orgId,
+      groupId: t.scope.groupId ?? null,
+      userId: t.scope.userId ?? null,
+      secretHash: t.secretHash,
+      createdAt: token.createdAt,
+      revokedAt: null,
+    });
+    return token;
+  }
+
+  async getApiToken(id: string): Promise<ApiToken | undefined> {
+    const at = this.t.apiTokens;
+    const [row] = await this.db.select().from(at).where(eq(at.id, id));
+    return row && toApiToken(row);
+  }
+
+  async listApiTokens(): Promise<ApiToken[]> {
+    const at = this.t.apiTokens;
+    const rows = await this.db.select().from(at).orderBy(asc(at.createdAt), asc(at.id));
+    return rows.map(toApiToken);
+  }
+
+  async revokeApiToken(id: string): Promise<boolean> {
+    const at = this.t.apiTokens;
+    const rows = await this.db
+      .update(at)
+      .set({ revokedAt: now() })
+      .where(and(eq(at.id, id), isNull(at.revokedAt)))
+      .returning();
+    return rows.length > 0;
+  }
+
   async audit(e: AuditEvent): Promise<void> {
     await this.db.insert(this.t.audit).values({ at: now(), ...e, detail: e.detail ?? null });
   }
@@ -204,6 +302,28 @@ function toTrace(r: typeof schema.traces.$inferSelect): TraceRecord {
     fired: r.fired as TraceRecord["fired"],
     attempts: r.attempts as TraceRecord["attempts"],
     ok: r.ok,
+    ...(r.caller != null && { caller: r.caller }),
+    ...(r.notes != null && { notes: r.notes as TraceNote[] }),
     createdAt: r.createdAt,
   };
+}
+
+function toConnection(r: typeof schema.mcpConnections.$inferSelect): McpConnection {
+  return {
+    id: r.id,
+    bag: r.bag,
+    server: r.server,
+    scope: r.scope as Scope,
+    scopeId: r.scopeId,
+    credential: r.credential,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+  };
+}
+
+function toApiToken(r: typeof schema.apiTokens.$inferSelect): ApiToken {
+  const scope: ScopeRef = { orgId: r.orgId };
+  if (r.groupId != null) scope.groupId = r.groupId;
+  if (r.userId != null) scope.userId = r.userId;
+  return { id: r.id, name: r.name, scope, secretHash: r.secretHash, createdAt: r.createdAt, revokedAt: r.revokedAt };
 }

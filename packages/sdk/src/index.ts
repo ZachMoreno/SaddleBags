@@ -174,16 +174,63 @@ export interface ModelRoute<S extends z.ZodType = z.ZodType> {
   /** "provider:model", with a pinned model version. */
   model: `${string}:${string}`;
   system?: string;
+  /** Optional typed input. Required when the route is exposed over MCP. */
+  input?: z.ZodType;
   /** Optional typed output: the "type-safe decision model". */
   output?: S;
   maxTokens?: number;
   temperature?: number;
   /** Max attempts when enforce directives reject. Default 3. */
   maxAttempts?: number;
-  /** Names of bag tools this operation's model may call. Default none. */
+  /**
+   * Tools this operation's model may call. Default none. Bag tools by name
+   * (`footage_search`); MCP tools as `<server>.<tool>` (`github.search_issues`).
+   */
   tools?: string[];
   /** Max model turns that end in tool calls, per attempt. Default 8. */
   maxToolTurns?: number;
+  /** Expose this operation as a tool on the server's `/mcp` endpoint. */
+  mcp?: {
+    expose: boolean;
+    /** MCP tool name. Default `<bag>__<operation>`, sanitized. */
+    name?: string;
+    /** MCP tool description. Default: the route's system prompt. */
+    description?: string;
+  };
+}
+
+// ─── MCP (3rd-party servers a bag uses) ───────────────────────────────────
+
+export type McpTransport =
+  | {
+      kind: "http";
+      /** Streamable HTTP endpoint. */
+      url: string;
+    }
+  | {
+      kind: "stdio";
+      /** Must be on the operator's stdio allowlist to run. */
+      command: string;
+      args?: string[];
+      /** For `auth: "token" | "oauth"`: the env var the credential is passed in. */
+      tokenEnv?: string;
+    };
+
+export interface McpServerDecl {
+  /** Short name used in tool names (`<name>.<tool>`). Letters, digits, `_` and `-`. */
+  name: string;
+  description?: string;
+  transport: McpTransport;
+  /**
+   * How a connection authenticates. `oauth` and `token` both store a
+   * credential (sent as `Authorization: Bearer`, or via `tokenEnv` for stdio).
+   * Interactive OAuth flows arrive with the Stable (M4).
+   */
+  auth: "oauth" | "token" | "none";
+  /** Scopes allowed to hold a connection. Default `["org"]`. */
+  connectAt?: Scope[];
+  /** If not connected, leave its tools out instead of failing the operation. */
+  optional?: boolean;
 }
 
 // ─── Memory ───────────────────────────────────────────────────────────────
@@ -236,6 +283,8 @@ export interface Bag {
   tools?: Tool<any, any>[];
   memory?: MemorySchema;
   evals?: EvalCase<any, any>[];
+  /** 3rd-party MCP servers whose tools routes may offer. */
+  mcp?: { servers: McpServerDecl[] };
 }
 
 // ─── define* helpers (identity functions for inference) ───────────────────

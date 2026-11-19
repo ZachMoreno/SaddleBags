@@ -40,6 +40,8 @@ export const traces = pgTable("traces", {
   fired: jsonb("fired").notNull(),
   attempts: jsonb("attempts").notNull(),
   ok: boolean("ok").notNull(),
+  caller: text("caller"),
+  notes: jsonb("notes"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -71,4 +73,42 @@ export const audit = pgTable("audit", {
   action: text("action").notNull(),
   subject: text("subject").notNull(),
   detail: jsonb("detail"),
+});
+
+export const mcpConnections = pgTable(
+  "mcp_connections",
+  {
+    id: text("id").primaryKey(),
+    bag: text("bag").notNull(),
+    server: text("server").notNull(),
+    scope: text("scope").notNull(),
+    scopeId: text("scope_id").notNull(),
+    credential: text("credential"),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("mcp_connections_target").on(t.bag, t.server, t.scope, t.scopeId)],
+);
+
+export const mcpPins = pgTable(
+  "mcp_pins",
+  {
+    bag: text("bag").notNull(),
+    version: text("version").notNull(),
+    server: text("server").notNull(),
+    tools: jsonb("tools").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.bag, t.version, t.server] })],
+);
+
+export const apiTokens = pgTable("api_tokens", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  orgId: text("org_id").notNull(),
+  groupId: text("group_id"),
+  userId: text("user_id"),
+  secretHash: text("secret_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  revokedAt: text("revoked_at"),
 });

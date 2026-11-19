@@ -92,6 +92,61 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
       expect(await store.latestEvalRun("b", "9.9.9")).toBeUndefined();
     });
 
+    it("stores a trace's caller and notes, and omits them when unset", async () => {
+      const base = { operation: "op", bag: "b", bagVersion: "1", scope: "o", model: "m", fired: [], attempts: [], ok: true };
+      const notes = [{ kind: "mcp.drift" as const, server: "gh", tool: "search", detail: "description changed" }];
+      const a = await store.putTrace({ ...base, caller: "mcp:tok1", notes });
+      const b = await store.putTrace(base);
+      expect(await store.getTrace(a.id)).toEqual(a);
+      const got = await store.getTrace(b.id);
+      expect(got).not.toHaveProperty("caller");
+      expect(got).not.toHaveProperty("notes");
+    });
+
+    it("upserts MCP connections by bag + server + scope, filters, and deletes", async () => {
+      const a = await store.putConnection({ bag: "b", server: "gh", scope: "org", scopeId: "acme", credential: "enc1", createdBy: "x" });
+      const a2 = await store.putConnection({ bag: "b", server: "gh", scope: "org", scopeId: "acme", credential: "enc2", createdBy: "y" });
+      await store.putConnection({ bag: "b", server: "gh", scope: "user", scopeId: "u1", credential: null, createdBy: "x" });
+      await store.putConnection({ bag: "b", server: "ff", scope: "org", scopeId: "acme", credential: null, createdBy: "x" });
+
+      expect(a2.id).toBe(a.id);
+      expect(a2.credential).toBe("enc2");
+      expect((await store.listConnections({ bag: "b", server: "gh" })).map((c) => [c.scope, c.credential])).toEqual([
+        ["org", "enc2"],
+        ["user", null],
+      ]);
+      expect(await store.listConnections()).toHaveLength(3);
+      expect(await store.deleteConnection(a.id)).toBe(true);
+      expect(await store.deleteConnection(a.id)).toBe(false);
+      expect(await store.listConnections({ server: "gh" })).toHaveLength(1);
+    });
+
+    it("upserts pins per bag version and server", async () => {
+      const tools = [{ name: "search", description: "Search issues", schemaHash: "h1" }];
+      await store.setPin({ bag: "b", version: "1", server: "gh", tools });
+      await store.setPin({ bag: "b", version: "1", server: "gh", tools: [{ ...tools[0]!, schemaHash: "h2" }] });
+      await store.setPin({ bag: "b", version: "1", server: "ff", tools: [] });
+      await store.setPin({ bag: "b", version: "2", server: "gh", tools });
+
+      const pins = await store.listPins("b", "1");
+      expect(pins.map((p) => p.server)).toEqual(["ff", "gh"]);
+      expect(pins[1]!.tools[0]!.schemaHash).toBe("h2");
+      expect(await store.listPins("b", "9")).toEqual([]);
+    });
+
+    it("stores API tokens with optional scope parts, and revokes once", async () => {
+      const t = await store.putApiToken({ id: "t1", name: "ci", scope: { orgId: "acme", userId: "u1" }, secretHash: "h" });
+      await store.putApiToken({ id: "t2", name: "org", scope: { orgId: "acme" }, secretHash: "h2" });
+
+      expect(await store.getApiToken("t1")).toEqual(t);
+      expect((await store.getApiToken("t2"))!.scope).toEqual({ orgId: "acme" });
+      expect(await store.getApiToken("nope")).toBeUndefined();
+      expect(await store.revokeApiToken("t1")).toBe(true);
+      expect(await store.revokeApiToken("t1")).toBe(false);
+      expect((await store.getApiToken("t1"))!.revokedAt).toEqual(expect.any(String));
+      expect((await store.listApiTokens()).map((x) => x.id)).toEqual(["t1", "t2"]);
+    });
+
     it("appends to the audit log in order", async () => {
       await store.audit({ actor: "a", action: "x", subject: "s", detail: { n: 1 } });
       await store.audit({ actor: "a", action: "y", subject: "s" });
