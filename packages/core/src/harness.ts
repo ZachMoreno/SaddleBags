@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type {
-  Bag,
+  Plugin,
   ChatMessage,
   EnforceResult,
   GenerateResponse,
@@ -28,12 +28,12 @@ import { SqliteStore } from "./store/sqlite.js";
 import type { Store, ToolCallRecord, TraceNote, TraceRecord } from "./store/types.js";
 
 export interface HarnessOptions {
-  bag: Bag;
+  plugin: Plugin;
   providers: ModelProvider[];
   store?: Store;
   /** Model used to decide model-decided conditions, e.g. "anthropic:claude-haiku-5-5". */
   selectorModel?: `${string}:${string}`;
-  /** Prose rules authored in the Stable, layered on top of the bag. */
+  /** Prose rules authored in the Admin, layered on top of the plugin. */
   overlays?: Rule[];
   /** Resolves routes' MCP tools (`<server>.<tool>`). Required if any route lists one. */
   mcp?: ExternalToolResolver;
@@ -87,7 +87,7 @@ export class InputError extends Error {
 type Rejection = { ruleId: string; reason: string };
 
 /** What a model-facing tool name refers to in this run. */
-type OfferedTool = { kind: "bag"; name: string } | { kind: "external"; tool: ExternalTool };
+type OfferedTool = { kind: "plugin"; name: string } | { kind: "external"; tool: ExternalTool };
 
 /** Everything that identifies a run in its trace. */
 interface RunMeta {
@@ -100,7 +100,7 @@ interface RunMeta {
 }
 
 export class Harness {
-  readonly bag: Bag;
+  readonly plugin: Plugin;
   readonly store: Store;
   readonly memory: Memory;
   private providers: Map<string, ModelProvider>;
@@ -109,22 +109,22 @@ export class Harness {
   private mcp?: ExternalToolResolver;
 
   constructor(opts: HarnessOptions) {
-    this.bag = opts.bag;
+    this.plugin = opts.plugin;
     this.store = opts.store ?? new SqliteStore();
-    this.memory = new Memory(this.store, opts.bag.memory);
+    this.memory = new Memory(this.store, opts.plugin.memory);
     this.providers = new Map(opts.providers.map((p) => [p.id, p]));
     for (const r of opts.overlays ?? []) assertOverlayRule(r);
-    this.rules = [...(opts.bag.rules ?? []), ...(opts.overlays ?? [])];
+    this.rules = [...(opts.plugin.rules ?? []), ...(opts.overlays ?? [])];
     if (opts.selectorModel) this.selector = this.modelSelector(opts.selectorModel);
     this.mcp = opts.mcp;
-    for (const t of opts.bag.tools ?? []) {
-      if (isMcpToolName(t.name)) throw new Error(`Bag tool "${t.name}": names can't contain "." (reserved for MCP tools)`);
+    for (const t of opts.plugin.tools ?? []) {
+      if (isMcpToolName(t.name)) throw new Error(`Plugin tool "${t.name}": names can't contain "." (reserved for MCP tools)`);
     }
   }
 
   route(operation: string): ModelRoute {
-    const route = this.bag.routes.find((r) => r.operation === operation);
-    if (!route) throw new Error(`Bag ${this.bag.name} has no route for operation "${operation}"`);
+    const route = this.plugin.routes.find((r) => r.operation === operation);
+    if (!route) throw new Error(`Plugin ${this.plugin.name} has no route for operation "${operation}"`);
     return route;
   }
 
@@ -226,15 +226,15 @@ export class Harness {
     throw new HarnessError(`Operation "${operation}" failed enforcement after ${maxAttempts} attempts`, trace);
   }
 
-  /** Run a bag tool directly, applying any enforce-tool directives first. */
+  /** Run a plugin tool directly, applying any enforce-tool directives first. */
   async callTool(name: string, args: unknown, ctx: OperationContext): Promise<unknown> {
     const fired = await selectRules(this.rules, ctx, this.selector);
     return this.runTool(name, args, fired, ctx);
   }
 
   private async runTool(name: string, args: unknown, fired: FiredRule[], ctx: OperationContext) {
-    const tool = this.bag.tools?.find((t) => t.name === name);
-    if (!tool) throw new Error(`Bag ${this.bag.name} has no tool "${name}"`);
+    const tool = this.plugin.tools?.find((t) => t.name === name);
+    if (!tool) throw new Error(`Plugin ${this.plugin.name} has no tool "${name}"`);
     const parsed = await applyToolRules(name, tool.input.parse(args), fired, ctx, (v) => tool.input.parse(v));
     return { args: parsed, result: await tool.run(parsed, ctx) };
   }
@@ -276,7 +276,7 @@ export class Harness {
     }
     try {
       const { args, result } =
-        t.kind === "bag"
+        t.kind === "plugin"
           ? await this.runTool(t.name, call.args, fired, ctx)
           : await this.runExternalTool(t.tool, call.args, fired, ctx);
       record.args = args;
@@ -296,21 +296,21 @@ export class Harness {
     const offered = new Map<string, OfferedTool>();
     const names = route.tools ?? [];
     for (const name of names.filter((n) => !isMcpToolName(n))) {
-      if (!this.bag.tools?.some((t) => t.name === name)) {
+      if (!this.plugin.tools?.some((t) => t.name === name)) {
         throw new Error(`Route ${route.operation} offers unknown tool "${name}"`);
       }
-      offered.set(name, { kind: "bag", name });
+      offered.set(name, { kind: "plugin", name });
     }
 
     const mcpNames = names.filter(isMcpToolName);
     if (mcpNames.length === 0) return offered;
     if (!this.mcp) throw new Error(`Route ${route.operation} offers MCP tools but no MCP resolver is configured`);
-    const set = await this.mcp.resolve(this.bag, mcpNames, ctx);
+    const set = await this.mcp.resolve(this.plugin, mcpNames, ctx);
     notes.push(...set.notes);
     for (const tool of set.tools) {
       const modelName = modelToolName(tool.name);
       if (offered.has(modelName)) {
-        throw new Error(`Route ${route.operation}: MCP tool "${tool.name}" collides with bag tool "${modelName}"`);
+        throw new Error(`Route ${route.operation}: MCP tool "${tool.name}" collides with plugin tool "${modelName}"`);
       }
       offered.set(modelName, { kind: "external", tool });
     }
@@ -321,7 +321,7 @@ export class Harness {
     if (t.kind === "external") {
       return { name: modelName, description: t.tool.description, inputSchema: t.tool.inputSchema };
     }
-    const tool = this.bag.tools!.find((x) => x.name === t.name)!;
+    const tool = this.plugin.tools!.find((x) => x.name === t.name)!;
     return {
       name: modelName,
       description: tool.description,
@@ -394,8 +394,8 @@ export class Harness {
     const { scope } = meta;
     return this.store.putTrace({
       operation: meta.operation,
-      bag: this.bag.name,
-      bagVersion: this.bag.version,
+      plugin: this.plugin.name,
+      pluginVersion: this.plugin.version,
       scope: [scope.orgId, scope.groupId, scope.userId].filter(Boolean).join("/"),
       model: meta.model,
       fired: meta.fired.map((f) => ({ ruleId: f.rule.id, reason: f.reason })),

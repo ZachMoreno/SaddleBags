@@ -114,26 +114,26 @@ export abstract class DrizzleStore implements Store {
     return rows.reverse().map(toTrace);
   }
 
-  async setInstall(bag: string, version: string, channel: Channel): Promise<void> {
+  async setInstall(plugin: string, version: string, channel: Channel): Promise<void> {
     const i = this.t.installs;
     const updatedAt = now();
     await this.db
       .insert(i)
-      .values({ bag, version, channel, updatedAt })
-      .onConflictDoUpdate({ target: [i.bag, i.version], set: { channel, updatedAt } });
+      .values({ plugin, version, channel, updatedAt })
+      .onConflictDoUpdate({ target: [i.plugin, i.version], set: { channel, updatedAt } });
   }
 
-  async listInstalls(bag?: string): Promise<Install[]> {
+  async listInstalls(plugin?: string): Promise<Install[]> {
     const i = this.t.installs;
     const q = this.db.select().from(i);
-    const rows = await (bag ? q.where(eq(i.bag, bag)) : q).orderBy(asc(i.bag), asc(i.updatedAt));
-    return rows.map((r) => ({ bag: r.bag, version: r.version, channel: r.channel as Channel, updatedAt: r.updatedAt }));
+    const rows = await (plugin ? q.where(eq(i.plugin, plugin)) : q).orderBy(asc(i.plugin), asc(i.updatedAt));
+    return rows.map((r) => ({ plugin: r.plugin, version: r.version, channel: r.channel as Channel, updatedAt: r.updatedAt }));
   }
 
   async putEvalRun(report: EvalReport): Promise<EvalRunRecord> {
     const run: EvalRunRecord = {
       id: randomUUID(),
-      bag: report.bag,
+      plugin: report.plugin,
       version: report.version,
       passRate: report.passRate,
       report,
@@ -143,21 +143,21 @@ export abstract class DrizzleStore implements Store {
     return run;
   }
 
-  async latestEvalRun(bag: string, version: string): Promise<EvalRunRecord | undefined> {
+  async latestEvalRun(plugin: string, version: string): Promise<EvalRunRecord | undefined> {
     const e = this.t.evalRuns;
     const [row] = await this.db
       .select()
       .from(e)
-      .where(and(eq(e.bag, bag), eq(e.version, version)))
+      .where(and(eq(e.plugin, plugin), eq(e.version, version)))
       .orderBy(desc(e.seq))
       .limit(1);
     return (
       row && {
         id: row.id,
-        bag: row.bag,
+        plugin: row.plugin,
         version: row.version,
         passRate: row.passRate,
-        report: row.report as EvalReport,
+        report: upgradeReport(row.report),
         createdAt: row.createdAt,
       }
     );
@@ -170,21 +170,21 @@ export abstract class DrizzleStore implements Store {
       .insert(mc)
       .values({ id: randomUUID(), ...c, createdAt })
       .onConflictDoUpdate({
-        target: [mc.bag, mc.server, mc.scope, mc.scopeId],
+        target: [mc.plugin, mc.server, mc.scope, mc.scopeId],
         set: { credential: c.credential, createdBy: c.createdBy, createdAt },
       })
       .returning();
     return toConnection(row!);
   }
 
-  async listConnections(filter: { bag?: string; server?: string } = {}): Promise<McpConnection[]> {
+  async listConnections(filter: { plugin?: string; server?: string } = {}): Promise<McpConnection[]> {
     const mc = this.t.mcpConnections;
-    const conds = [filter.bag ? eq(mc.bag, filter.bag) : undefined, filter.server ? eq(mc.server, filter.server) : undefined];
+    const conds = [filter.plugin ? eq(mc.plugin, filter.plugin) : undefined, filter.server ? eq(mc.server, filter.server) : undefined];
     const rows = await this.db
       .select()
       .from(mc)
       .where(and(...conds))
-      .orderBy(asc(mc.bag), asc(mc.server), asc(mc.scope), asc(mc.scopeId));
+      .orderBy(asc(mc.plugin), asc(mc.server), asc(mc.scope), asc(mc.scopeId));
     return rows.map(toConnection);
   }
 
@@ -200,18 +200,18 @@ export abstract class DrizzleStore implements Store {
     await this.db
       .insert(p)
       .values({ ...pin, createdAt })
-      .onConflictDoUpdate({ target: [p.bag, p.version, p.server], set: { tools: pin.tools, createdAt } });
+      .onConflictDoUpdate({ target: [p.plugin, p.version, p.server], set: { tools: pin.tools, createdAt } });
   }
 
-  async listPins(bag: string, version: string): Promise<McpPin[]> {
+  async listPins(plugin: string, version: string): Promise<McpPin[]> {
     const p = this.t.mcpPins;
     const rows = await this.db
       .select()
       .from(p)
-      .where(and(eq(p.bag, bag), eq(p.version, version)))
+      .where(and(eq(p.plugin, plugin), eq(p.version, version)))
       .orderBy(asc(p.server));
     return rows.map((r) => ({
-      bag: r.bag,
+      plugin: r.plugin,
       version: r.version,
       server: r.server,
       tools: r.tools as PinnedTool[],
@@ -295,8 +295,8 @@ function toTrace(r: typeof schema.traces.$inferSelect): TraceRecord {
   return {
     id: r.id,
     operation: r.operation,
-    bag: r.bag,
-    bagVersion: r.bagVersion,
+    plugin: r.plugin,
+    pluginVersion: r.pluginVersion,
     scope: r.scope,
     model: r.model,
     fired: r.fired as TraceRecord["fired"],
@@ -311,7 +311,7 @@ function toTrace(r: typeof schema.traces.$inferSelect): TraceRecord {
 function toConnection(r: typeof schema.mcpConnections.$inferSelect): McpConnection {
   return {
     id: r.id,
-    bag: r.bag,
+    plugin: r.plugin,
     server: r.server,
     scope: r.scope as Scope,
     scopeId: r.scopeId,
@@ -326,4 +326,14 @@ function toApiToken(r: typeof schema.apiTokens.$inferSelect): ApiToken {
   if (r.groupId != null) scope.groupId = r.groupId;
   if (r.userId != null) scope.userId = r.userId;
   return { id: r.id, name: r.name, scope, secretHash: r.secretHash, createdAt: r.createdAt, revokedAt: r.revokedAt };
+}
+
+/** Reports stored before Bags were renamed to Plugins carry `bag` instead of `plugin`. */
+function upgradeReport(raw: unknown): EvalReport {
+  const r = raw as EvalReport & { bag?: string };
+  if (r.plugin === undefined && r.bag !== undefined) {
+    const { bag, ...rest } = r;
+    return { ...rest, plugin: bag };
+  }
+  return r;
 }

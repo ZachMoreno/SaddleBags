@@ -1,13 +1,13 @@
-import type { Bag, OperationContext, Scope } from "@saddlebags/sdk";
+import type { Plugin, OperationContext, Scope } from "@saddlebags/sdk";
 import type { TraceNote } from "./store/types.js";
 
 /**
- * A tool from outside the bag, such as one served by a 3rd-party MCP server.
- * The harness runs it through the same path as a bag tool: route allowlist,
+ * A tool from outside the plugin, such as one served by a 3rd-party MCP server.
+ * The harness runs it through the same path as a plugin tool: route allowlist,
  * argument validation, enforce-tool directives, errors back to the model.
  */
 export interface ExternalTool {
-  /** The name used in bag code and rules: `<server>.<tool>`. */
+  /** The name used in plugin code and rules: `<server>.<tool>`. */
   name: string;
   server: string;
   description: string;
@@ -31,7 +31,7 @@ export interface ExternalToolResolver {
    * @param names the route's MCP tool names (`<server>.<tool>`)
    * @throws McpNotConnectedError if a required server has no connection for the caller's scope
    */
-  resolve(bag: Bag, names: string[], ctx: OperationContext): Promise<ExternalToolSet>;
+  resolve(plugin: Plugin, names: string[], ctx: OperationContext): Promise<ExternalToolSet>;
 }
 
 /** A required MCP server can't supply tools for this run. The operation fails before calling the model. */

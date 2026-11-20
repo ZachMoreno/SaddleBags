@@ -1,4 +1,4 @@
 packages:
   - "packages/*"
-  - "bags/*"
+  - "plugins/*"
   - "apps/*"

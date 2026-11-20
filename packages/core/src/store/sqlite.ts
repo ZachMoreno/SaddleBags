@@ -20,7 +20,7 @@ export class SqliteStore extends DrizzleStore {
   constructor(path = ":memory:") {
     const sqlite = new DatabaseSync(path);
     sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    migrateSync(sqlite, SQLITE_MIGRATIONS);
+    migrateSqlite(sqlite, SQLITE_MIGRATIONS);
 
     const db = drizzle(async (sql, params, method) => {
       const stmt = sqlite.prepare(sql);
@@ -46,7 +46,7 @@ export class SqliteStore extends DrizzleStore {
 }
 
 /** Apply pending drizzle-kit migrations, recording them as Drizzle's own migrator does. */
-function migrateSync(sqlite: DatabaseSync, migrationsFolder: string): void {
+export function migrateSqlite(sqlite: DatabaseSync, migrationsFolder: string): void {
   const migrations = readMigrationFiles({ migrationsFolder });
   sqlite.exec(
     `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (id INTEGER PRIMARY KEY, hash text NOT NULL, created_at numeric)`,

@@ -54,22 +54,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
-      '@saddlebags/bag-video-brief-to-script':
+      '@saddlebags/plugin-video-brief-to-script':
         specifier: workspace:*
-        version: link:../../bags/video-brief-to-script
-
-  bags/video-brief-to-script:
-    dependencies:
-      '@saddlebags/sdk':
-        specifier: workspace:*
-        version: link:../../packages/sdk
-      zod:
-        specifier: ^4.1.0
-        version: 4.6.7
-    devDependencies:
-      '@saddlebags/core':
-        specifier: workspace:*
-        version: link:../../packages/core
+        version: link:../../plugins/video-brief-to-script
 
   packages/artifacts-s3:
     dependencies:
@@ -170,6 +157,19 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+
+  plugins/video-brief-to-script:
+    dependencies:
+      '@saddlebags/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.7
+    devDependencies:
+      '@saddlebags/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
 packages:
 

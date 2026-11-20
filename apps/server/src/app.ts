@@ -19,7 +19,7 @@ const Scope = z.object({
 const RunBody = z.object({
   input: z.unknown(),
   scope: Scope,
-  bag: z.string().optional(),
+  plugin: z.string().optional(),
   channel: z.enum(["latest", "rc"]).optional(),
   history: z.array(z.object({ operation: z.string(), output: z.unknown() })).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
@@ -29,7 +29,7 @@ const Review = z.object({ reviewer: z.string().min(1) });
 const Promote = z.object({ version: z.string().optional(), minPassRate: z.number().min(0).max(1).optional() });
 const Unpublish = z.object({ version: z.string() });
 const Connect = z.object({
-  bag: z.string(),
+  plugin: z.string(),
   server: z.string(),
   scope: z.enum(["org", "group", "user"]),
   scopeId: z.string().min(1),
@@ -53,8 +53,8 @@ export function createApp(runtime: Runtime, opts: AppOptions = {}): Hono {
   app.get("/health", async (c) =>
     c.json({
       ok: true,
-      bags: await Promise.all(
-        runtime.bags.map(async (b) => ({
+      plugins: await Promise.all(
+        runtime.plugins.map(async (b) => ({
           name: b.name,
           version: b.version,
           channel: (await runtime.lifecycle.channelOf(b.name, b.version)) ?? null,
@@ -92,7 +92,7 @@ export function createApp(runtime: Runtime, opts: AppOptions = {}): Hono {
   // ─── Operations ─────────────────────────────────────────────────────────
   app.post("/operations/:name", async (c) => {
     const body = RunBody.parse(await c.req.json());
-    const harness = await runtime.resolveOperation(c.req.param("name"), { bag: body.bag, channel: body.channel });
+    const harness = await runtime.resolveOperation(c.req.param("name"), { plugin: body.plugin, channel: body.channel });
     try {
       const { output, trace } = await harness.run(c.req.param("name"), body.input, {
         scope: body.scope,
@@ -142,21 +142,21 @@ export function createApp(runtime: Runtime, opts: AppOptions = {}): Hono {
   app.post("/memory/proposals/:id/approve", resolveProposal(true));
   app.post("/memory/proposals/:id/reject", resolveProposal(false));
 
-  // ─── Bags & releases ────────────────────────────────────────────────────
-  // Bag names are npm names, often scoped: URL-encode them (%40scope%2Fname).
-  app.get("/bags", async (c) => c.json(await runtime.store.listInstalls()));
+  // ─── Plugins & releases ────────────────────────────────────────────────────
+  // Plugin names are npm names, often scoped: URL-encode them (%40scope%2Fname).
+  app.get("/plugins", async (c) => c.json(await runtime.store.listInstalls()));
 
-  app.post("/bags/:name/evals", async (c) => {
+  app.post("/plugins/:name/evals", async (c) => {
     const name = c.req.param("name");
     runtime.harness(name);
     return c.json(await runtime.evaluate(name));
   });
 
-  app.post("/bags/:name/promote", async (c) => {
+  app.post("/plugins/:name/promote", async (c) => {
     const name = c.req.param("name");
     const body = Promote.parse(await c.req.json().catch(() => ({})));
-    const version = body.version ?? runtime.harness(name).bag.version;
-    if (version !== runtime.harness(name).bag.version) {
+    const version = body.version ?? runtime.harness(name).plugin.version;
+    if (version !== runtime.harness(name).plugin.version) {
       const gate = await runtime.lifecycle.promoteFromStore(name, version, actor(c), {
         minPassRate: body.minPassRate ?? runtime.config.minPassRate,
       });
@@ -166,17 +166,17 @@ export function createApp(runtime: Runtime, opts: AppOptions = {}): Hono {
     return c.json(result, result.ok ? 200 : 409);
   });
 
-  app.post("/bags/:name/repin", async (c) => {
+  app.post("/plugins/:name/repin", async (c) => {
     const body = Promote.parse(await c.req.json().catch(() => ({})));
     const result = await runtime.repin(c.req.param("name"), { actor: actor(c), minPassRate: body.minPassRate });
     return c.json(result, result.ok ? 200 : 409);
   });
 
-  app.get("/bags/:name/mcp/drift", async (c) => c.json(await runtime.mcp.drift(runtime.harness(c.req.param("name")).bag)));
+  app.get("/plugins/:name/mcp/drift", async (c) => c.json(await runtime.mcp.drift(runtime.harness(c.req.param("name")).plugin)));
 
-  // ─── MCP connections & API tokens (the Stable manages these from M4) ────
+  // ─── MCP connections & API tokens (the Admin manages these from M4) ────
   app.get("/mcp/connections", async (c) => {
-    const conns = await runtime.store.listConnections({ bag: c.req.query("bag"), server: c.req.query("server") });
+    const conns = await runtime.store.listConnections({ plugin: c.req.query("plugin"), server: c.req.query("server") });
     return c.json(conns.map(({ credential, ...rest }) => ({ ...rest, hasCredential: credential !== null })));
   });
 
@@ -184,7 +184,7 @@ export function createApp(runtime: Runtime, opts: AppOptions = {}): Hono {
     const body = Connect.parse(await c.req.json());
     let conn;
     try {
-      conn = await runtime.connections.connect({ ...body, bag: runtime.harness(body.bag).bag, by: actor(c) });
+      conn = await runtime.connections.connect({ ...body, plugin: runtime.harness(body.plugin).plugin, by: actor(c) });
     } catch (e) {
       if (e instanceof RuntimeError) throw e;
       return c.json({ error: (e as Error).message }, 400);
@@ -214,7 +214,7 @@ export function createApp(runtime: Runtime, opts: AppOptions = {}): Hono {
     (await runtime.tokens.revoke(c.req.param("id"), actor(c))) ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404),
   );
 
-  app.post("/bags/:name/unpublish", async (c) => {
+  app.post("/plugins/:name/unpublish", async (c) => {
     const { version } = Unpublish.parse(await c.req.json());
     await runtime.lifecycle.unpublish(c.req.param("name"), version, actor(c));
     return c.json({ ok: true });

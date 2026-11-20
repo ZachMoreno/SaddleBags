@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { defineBag, reject, pass } from "@saddlebags/sdk";
+import { definePlugin, reject, pass } from "@saddlebags/sdk";
 import {
   FsArtifactStore,
   Harness,
@@ -17,8 +17,8 @@ import {
   type EvalReport,
 } from "../src/index.js";
 
-const bag = defineBag({
-  name: "test-bag",
+const plugin = definePlugin({
+  name: "test-plugin",
   version: "1.0.0",
   routes: [
     { operation: "echo", model: "mock:m1" },
@@ -46,7 +46,7 @@ const scope = { orgId: "acme", groupId: "brand", userId: "u1" };
 describe("Harness", () => {
   it("injects prose directives and records why rules fired", async () => {
     const p = new MockProvider("mock", () => "hi");
-    const h = new Harness({ bag, providers: [p] });
+    const h = new Harness({ plugin, providers: [p] });
     const { output, trace } = await h.run("echo", "hello", { scope });
     expect(output).toBe("hi");
     expect(p.calls[0]!.system).toContain("[always] Be brief.");
@@ -56,7 +56,7 @@ describe("Harness", () => {
 
   it("gates rules with code predicates", async () => {
     const p = new MockProvider("mock", () => '{"n": 1}');
-    const h = new Harness({ bag, providers: [p] });
+    const h = new Harness({ plugin, providers: [p] });
     const small = await h.run("typed", { big: false }, { scope });
     const big = await h.run("typed", { big: true }, { scope });
     expect(small.trace.fired.map((f) => f.ruleId)).not.toContain("only-typed");
@@ -65,50 +65,50 @@ describe("Harness", () => {
 
   it("retries on enforce rejection, feeding back the reason, then fails loudly", async () => {
     const p = new MockProvider("mock", (_r, i) => (i === 0 ? '{"n": -1}' : '{"n": 5}'));
-    const h = new Harness({ bag, providers: [p] });
+    const h = new Harness({ plugin, providers: [p] });
     const ok = await h.run<{ n: number }>("typed", {}, { scope });
     expect(ok.output.n).toBe(5);
     expect(p.calls[1]!.messages.at(-1)!.content).toContain("[positive] n must be > 0");
 
-    const bad = new Harness({ bag, providers: [new MockProvider("mock", () => '{"n": 0}')] });
+    const bad = new Harness({ plugin, providers: [new MockProvider("mock", () => '{"n": 0}')] });
     await expect(bad.run("typed", {}, { scope })).rejects.toBeInstanceOf(HarnessError);
     expect((await bad.store.listTraces({ operation: "typed" }))[0]!.ok).toBe(false);
   });
 
   it("treats schema failures as rejections", async () => {
     const p = new MockProvider("mock", (_r, i) => (i === 0 ? "not json" : '```json\n{"n": 2}\n```'));
-    const h = new Harness({ bag, providers: [p] });
+    const h = new Harness({ plugin, providers: [p] });
     const { trace } = await h.run("typed", {}, { scope });
     expect(trace.attempts[0]!.rejections[0]!.ruleId).toBe("schema");
   });
 
   it("requires a selector for model-decided rules and batches them in one call", async () => {
-    const modelBag = defineBag({
-      ...bag,
+    const modelPlugin = definePlugin({
+      ...plugin,
       rules: [
         { id: "a", condition: { kind: "model", description: "A" }, directive: { kind: "prose", text: "A!" } },
         { id: "b", condition: { kind: "model", description: "B" }, directive: { kind: "prose", text: "B!" } },
       ],
     });
     await expect(
-      new Harness({ bag: modelBag, providers: [new MockProvider("mock", () => "x")] }).run("echo", "", { scope }),
+      new Harness({ plugin: modelPlugin, providers: [new MockProvider("mock", () => "x")] }).run("echo", "", { scope }),
     ).rejects.toThrow(/no rule selector/);
 
     const p = new MockProvider("mock", (req) =>
       req.system.startsWith("You decide") ? '{"ruleIds": ["b", "zzz"]}' : "ok",
     );
-    const h = new Harness({ bag: modelBag, providers: [p], selectorModel: "mock:sel" });
+    const h = new Harness({ plugin: modelPlugin, providers: [p], selectorModel: "mock:sel" });
     const { trace } = await h.run("echo", "", { scope });
     expect(trace.fired).toEqual([{ ruleId: "b", reason: "selector" }]);
     expect(p.calls.filter((c) => c.model === "sel")).toHaveLength(1);
   });
 
-  it("only accepts prose overlays from the Stable", () => {
+  it("only accepts prose overlays from the Admin", () => {
     const providers = [new MockProvider("mock", () => "")];
     expect(
       () =>
         new Harness({
-          bag,
+          plugin,
           providers,
           overlays: [{ id: "x", condition: { kind: "always" }, directive: { kind: "enforce", check: () => pass() } }],
         }),
@@ -117,8 +117,8 @@ describe("Harness", () => {
 });
 
 describe("Harness tool loop", () => {
-  const toolBag = defineBag({
-    name: "tool-bag",
+  const toolPlugin = definePlugin({
+    name: "tool-plugin",
     version: "1.0.0",
     tools: [
       {
@@ -177,7 +177,7 @@ describe("Harness tool loop", () => {
         ? { toolCalls: [{ id: "c1", name: "add", args: { a: 2, b: 3 } }] }
         : '{"answer": 5}',
     );
-    const h = new Harness({ bag: toolBag, providers: [p] });
+    const h = new Harness({ plugin: toolPlugin, providers: [p] });
     const { output, trace } = await h.run<{ answer: number }>("calc", "2+3?", { scope });
 
     expect(output.answer).toBe(5);
@@ -202,7 +202,7 @@ describe("Harness tool loop", () => {
           }
         : '{"answer": 0}',
     );
-    const h = new Harness({ bag: toolBag, providers: [p] });
+    const h = new Harness({ plugin: toolPlugin, providers: [p] });
     const { trace } = await h.run("calc", "", { scope });
     const [blocked, invalid, unoffered, thrown] = trace.attempts[0]!.toolCalls!;
 
@@ -218,22 +218,22 @@ describe("Harness tool loop", () => {
     const p = new MockProvider("mock", (_req, i) =>
       i === 0 ? { toolCalls: [{ id: "c1", name: "add", args: { a: 1, b: 100 } }] } : '{"answer": 201}',
     );
-    const { trace } = await new Harness({ bag: toolBag, providers: [p] }).run("calc", "", { scope });
+    const { trace } = await new Harness({ plugin: toolPlugin, providers: [p] }).run("calc", "", { scope });
     expect(trace.attempts[0]!.toolCalls![0]).toMatchObject({ args: { a: 1, b: 200 }, result: { sum: 201 } });
   });
 
   it("fails loudly when the model exceeds maxToolTurns", async () => {
     const p = new MockProvider("mock", () => ({ toolCalls: [{ id: "c", name: "add", args: { a: 1, b: 1 } }] }));
-    const h = new Harness({ bag: toolBag, providers: [p] });
+    const h = new Harness({ plugin: toolPlugin, providers: [p] });
     await expect(h.run("calc", "", { scope })).rejects.toThrow(/exceeded 3 tool turns/);
     expect(p.calls).toHaveLength(4);
     expect((await h.store.listTraces({ operation: "calc" }))[0]!.ok).toBe(false);
   });
 
   it("rejects routes that offer unknown tools", async () => {
-    const bad = defineBag({ ...toolBag, routes: [{ operation: "x", model: "mock:m", tools: ["nope"] }] });
+    const bad = definePlugin({ ...toolPlugin, routes: [{ operation: "x", model: "mock:m", tools: ["nope"] }] });
     await expect(
-      new Harness({ bag: bad, providers: [new MockProvider("mock", () => "")] }).run("x", "", { scope }),
+      new Harness({ plugin: bad, providers: [new MockProvider("mock", () => "")] }).run("x", "", { scope }),
     ).rejects.toThrow(/unknown tool "nope"/);
   });
 });
@@ -268,7 +268,7 @@ describe("Memory", () => {
 
 describe("Lifecycle", () => {
   const report = (version: string, passes: boolean[]): EvalReport => ({
-    bag: "b",
+    plugin: "b",
     version,
     passRate: passes.filter(Boolean).length / passes.length,
     cases: passes.map((pass, i) => ({ caseId: `c${i}`, pass, graders: [] })),

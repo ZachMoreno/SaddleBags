@@ -12,7 +12,7 @@ export interface MemoryProposal extends MemoryProposalInput {
 export type Channel = "rc" | "latest" | "unpublished";
 
 export interface Install {
-  bag: string;
+  plugin: string;
   version: string;
   channel: Channel;
   updatedAt: string;
@@ -43,8 +43,8 @@ export interface TraceNote {
 export interface TraceRecord {
   id: string;
   operation: string;
-  bag: string;
-  bagVersion: string;
+  plugin: string;
+  pluginVersion: string;
   scope: string;
   model: string;
   fired: Array<{ ruleId: string; reason: string }>;
@@ -69,17 +69,17 @@ export interface AuditEvent {
 
 export interface EvalRunRecord {
   id: string;
-  bag: string;
+  plugin: string;
   version: string;
   passRate: number;
   report: EvalReport;
   createdAt: string;
 }
 
-/** An admin's connection of a bag-declared MCP server, at one scope. */
+/** An admin's connection of a plugin-declared MCP server, at one scope. */
 export interface McpConnection {
   id: string;
-  bag: string;
+  plugin: string;
   server: string;
   scope: Scope;
   scopeId: string;
@@ -96,9 +96,9 @@ export interface PinnedTool {
   schemaHash: string;
 }
 
-/** The tool definitions of one server, snapshotted when a bag version is promoted. */
+/** The tool definitions of one server, snapshotted when a plugin version is promoted. */
 export interface McpPin {
-  bag: string;
+  plugin: string;
   version: string;
   server: string;
   tools: PinnedTool[];
@@ -135,21 +135,21 @@ export interface Store {
   /** Newest last. */
   listTraces(filter?: { operation?: string; limit?: number }): Promise<TraceRecord[]>;
 
-  setInstall(bag: string, version: string, channel: Channel): Promise<void>;
-  listInstalls(bag?: string): Promise<Install[]>;
+  setInstall(plugin: string, version: string, channel: Channel): Promise<void>;
+  listInstalls(plugin?: string): Promise<Install[]>;
 
   putEvalRun(report: EvalReport): Promise<EvalRunRecord>;
-  /** The most recent eval run for a bag version. */
-  latestEvalRun(bag: string, version: string): Promise<EvalRunRecord | undefined>;
+  /** The most recent eval run for a plugin version. */
+  latestEvalRun(plugin: string, version: string): Promise<EvalRunRecord | undefined>;
 
-  /** Upsert by (bag, server, scope, scopeId). */
+  /** Upsert by (plugin, server, scope, scopeId). */
   putConnection(c: Omit<McpConnection, "id" | "createdAt">): Promise<McpConnection>;
-  listConnections(filter?: { bag?: string; server?: string }): Promise<McpConnection[]>;
+  listConnections(filter?: { plugin?: string; server?: string }): Promise<McpConnection[]>;
   deleteConnection(id: string): Promise<boolean>;
 
-  /** Upsert by (bag, version, server). */
+  /** Upsert by (plugin, version, server). */
   setPin(pin: Omit<McpPin, "createdAt">): Promise<void>;
-  listPins(bag: string, version: string): Promise<McpPin[]>;
+  listPins(plugin: string, version: string): Promise<McpPin[]>;
 
   putApiToken(t: Omit<ApiToken, "createdAt" | "revokedAt">): Promise<ApiToken>;
   getApiToken(id: string): Promise<ApiToken | undefined>;

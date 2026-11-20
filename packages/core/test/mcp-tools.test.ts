@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { defineBag, pass, reject, transform, type Bag, type OperationContext } from "@saddlebags/sdk";
+import { definePlugin, pass, reject, transform, type Plugin, type OperationContext } from "@saddlebags/sdk";
 import {
   Harness,
   HarnessError,
@@ -29,19 +29,19 @@ function issueTool(calls: unknown[]): ExternalTool {
   };
 }
 
-function resolver(fn: (names: string[], ctx: OperationContext, bag: Bag) => ReturnType<ExternalToolResolver["resolve"]>) {
+function resolver(fn: (names: string[], ctx: OperationContext, plugin: Plugin) => ReturnType<ExternalToolResolver["resolve"]>) {
   const seen: string[][] = [];
   const r: ExternalToolResolver = {
-    resolve: (bag, names, ctx) => {
+    resolve: (plugin, names, ctx) => {
       seen.push(names);
-      return fn(names, ctx, bag);
+      return fn(names, ctx, plugin);
     },
   };
   return { r, seen };
 }
 
-const bag = defineBag({
-  name: "mcp-bag",
+const plugin = definePlugin({
+  name: "mcp-plugin",
   version: "1.0.0",
   tools: [{ name: "local", description: "Local", input: z.object({}), run: () => "local!" }],
   routes: [
@@ -89,7 +89,7 @@ describe("MCP tools in the harness", () => {
           }
         : "done",
     );
-    const h = new Harness({ bag, providers: [p], mcp: r });
+    const h = new Harness({ plugin, providers: [p], mcp: r });
     const { trace } = await h.run("ask", { question: "?" }, { scope, caller: "mcp:tok1" });
 
     expect(seen).toEqual([["github.search_issues"]]);
@@ -115,7 +115,7 @@ describe("MCP tools in the harness", () => {
       notes: [{ kind: "mcp.drift", server: "github", tool: "search_issues", detail: "description changed" }],
     }));
     const p = new MockProvider("mock", () => "ok");
-    const { trace } = await new Harness({ bag, providers: [p], mcp: r }).run("ask", { question: "?" }, { scope });
+    const { trace } = await new Harness({ plugin, providers: [p], mcp: r }).run("ask", { question: "?" }, { scope });
     expect(p.calls[0]!.tools!.map((t) => t.name)).toEqual(["local"]);
     expect(trace.notes).toEqual([{ kind: "mcp.drift", server: "github", tool: "search_issues", detail: "description changed" }]);
   });
@@ -125,7 +125,7 @@ describe("MCP tools in the harness", () => {
       throw new McpNotConnectedError("github", [{ scope: "org", scopeId: "acme" }]);
     });
     const p = new MockProvider("mock", () => "ok");
-    const h = new Harness({ bag, providers: [p], mcp: r });
+    const h = new Harness({ plugin, providers: [p], mcp: r });
     const err = await h.run("ask", { question: "?" }, { scope }).catch((e) => e);
     expect(err).toBeInstanceOf(HarnessError);
     expect(err.message).toMatch(/"github" is not connected for org:acme/);
@@ -136,22 +136,22 @@ describe("MCP tools in the harness", () => {
 
   it("validates the route's input schema before anything runs", async () => {
     const p = new MockProvider("mock", () => "ok");
-    const h = new Harness({ bag, providers: [p], mcp: resolver(async () => ({ tools: [], notes: [] })).r });
+    const h = new Harness({ plugin, providers: [p], mcp: resolver(async () => ({ tools: [], notes: [] })).r });
     await expect(h.run("ask", { nope: 1 }, { scope })).rejects.toBeInstanceOf(InputError);
     expect(p.calls).toHaveLength(0);
   });
 
   it("doesn't call the resolver for routes without MCP tools, and requires one for routes with them", async () => {
     const { r, seen } = resolver(async () => ({ tools: [], notes: [] }));
-    await new Harness({ bag, providers: [new MockProvider("mock", () => "ok")], mcp: r }).run("plain", "x", { scope });
+    await new Harness({ plugin, providers: [new MockProvider("mock", () => "ok")], mcp: r }).run("plain", "x", { scope });
     expect(seen).toEqual([]);
     await expect(
-      new Harness({ bag, providers: [new MockProvider("mock", () => "ok")] }).run("ask", { question: "?" }, { scope }),
+      new Harness({ plugin, providers: [new MockProvider("mock", () => "ok")] }).run("ask", { question: "?" }, { scope }),
     ).rejects.toThrow(/no MCP resolver/);
   });
 
-  it("rejects bag tools whose names contain a dot", () => {
-    const bad = defineBag({ ...bag, tools: [{ name: "a.b", description: "", input: z.object({}), run: () => 1 }] });
-    expect(() => new Harness({ bag: bad, providers: [] })).toThrow(/can't contain "\."/);
+  it("rejects plugin tools whose names contain a dot", () => {
+    const bad = definePlugin({ ...plugin, tools: [{ name: "a.b", description: "", input: z.object({}), run: () => 1 }] });
+    expect(() => new Harness({ plugin: bad, providers: [] })).toThrow(/can't contain "\."/);
   });
 });

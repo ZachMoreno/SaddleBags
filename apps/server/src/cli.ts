@@ -7,7 +7,7 @@ import { Lifecycle, Memory, type EvalReport, type Store } from "@saddlebags/core
 import { Secrets } from "@saddlebags/mcp";
 import type { Scope, ScopeRef } from "@saddlebags/sdk";
 import { createApp } from "./app.js";
-import { CONFIG_FILES, importBag, loadConfig, type LoadedConfig } from "./config.js";
+import { CONFIG_FILES, importPlugin, loadConfig, type LoadedConfig } from "./config.js";
 import { Runtime, openStore } from "./runtime.js";
 
 export interface CliDeps {
@@ -120,7 +120,7 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
         return;
       }
       await writeFile(join(deps.cwd, CONFIG_FILES[0]!), CONFIG_TEMPLATE);
-      log(`Created ${CONFIG_FILES[0]}. Next: saddlebags install <bag-package>`);
+      log(`Created ${CONFIG_FILES[0]}. Next: saddlebags install <plugin-package>`);
     });
 
   program
@@ -134,9 +134,9 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
 
   program
     .command("install <package>")
-    .description("npm-install a bag and register it as a release candidate")
+    .description("npm-install a plugin and register it as a release candidate")
     .option("--no-npm", "skip the package-manager install (already installed)")
-    .option("--org <id>", "seed the bag's starter memory for this org")
+    .option("--org <id>", "seed the plugin's starter memory for this org")
     .action(async (spec: string, opts: { npm: boolean; org?: string }) => {
       const cfg = await loaded();
       if (opts.npm) {
@@ -144,41 +144,41 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
         await deps.exec(cmd!, [...args, spec], cfg.root);
       }
       const name = packageName(spec);
-      const bag = await importBag(name, cfg.root);
+      const plugin = await importPlugin(name, cfg.root);
       await withStore(async (store) => {
-        await new Lifecycle(store).installRc(bag.name, bag.version, "cli");
-        log(`Installed ${bag.name}@${bag.version} as rc.`);
+        await new Lifecycle(store).installRc(plugin.name, plugin.version, "cli");
+        log(`Installed ${plugin.name}@${plugin.version} as rc.`);
         if (opts.org) {
-          await new Memory(store, bag.memory).seed({ orgId: opts.org });
+          await new Memory(store, plugin.memory).seed({ orgId: opts.org });
           log(`Seeded starter memory for org "${opts.org}".`);
         }
       });
-      if (!cfg.config.bags.includes(name)) log(`Add "${name}" to bags in your saddlebags config to serve it.`);
-      log(`Next: saddlebags eval ${bag.name}`);
+      if (!cfg.config.plugins.includes(name)) log(`Add "${name}" to plugins in your saddlebags config to serve it.`);
+      log(`Next: saddlebags eval ${plugin.name}`);
     });
 
   withScopeFlags(
-    program.command("eval <bag>").description("run a bag's evals and record the result (scope flags override config.evalScope)"),
-  ).action((bagName: string, flags: ScopeFlags) =>
+    program.command("eval <plugin>").description("run a plugin's evals and record the result (scope flags override config.evalScope)"),
+  ).action((pluginName: string, flags: ScopeFlags) =>
       withRuntime(async (rt) => {
-        const report = await rt.evaluate(bagName, { scope: flags.org ? scopeRef(flags) : undefined });
+        const report = await rt.evaluate(pluginName, { scope: flags.org ? scopeRef(flags) : undefined });
         printReport(report, log);
         if (report.passRate < (rt.config.minPassRate ?? 1)) setExit(1);
       }),
     );
 
   program
-    .command("promote <bag>")
+    .command("promote <plugin>")
     .description("promote the installed version to latest if its evals pass the gate")
     .option("--min-pass-rate <rate>", "override the configured minimum pass rate", parseFloat)
-    .action((bagName: string, opts: { minPassRate?: number }) =>
+    .action((pluginName: string, opts: { minPassRate?: number }) =>
       withRuntime(async (rt) => {
-        const result = await rt.promote(bagName, { minPassRate: opts.minPassRate });
+        const result = await rt.promote(pluginName, { minPassRate: opts.minPassRate });
         if (result.ok) {
-          log(`Promoted ${bagName}@${result.version} to latest.`);
+          log(`Promoted ${pluginName}@${result.version} to latest.`);
           printPins(result.pins, log);
         } else {
-          log(`Promotion of ${bagName}@${result.version} blocked:`);
+          log(`Promotion of ${pluginName}@${result.version} blocked:`);
           for (const r of result.reasons) log(`  - ${r}`);
           setExit(1);
         }
@@ -186,15 +186,15 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
     );
 
   // ─── MCP connections (§4.11.1) ──────────────────────────────────────────
-  const mcp = program.command("mcp").description("connect the MCP servers bags declare, and manage pins");
+  const mcp = program.command("mcp").description("connect the MCP servers plugins declare, and manage pins");
 
   withScopeFlags(
     mcp
-      .command("connect <bag> <server>")
-      .description("connect a bag's MCP server at one scope (credential from --token-env or --token-stdin)")
+      .command("connect <plugin> <server>")
+      .description("connect a plugin's MCP server at one scope (credential from --token-env or --token-stdin)")
       .option("--token-env <var>", "read the credential from this environment variable")
       .option("--token-stdin", "read the credential from stdin"),
-  ).action((bagName: string, server: string, flags: ScopeFlags & { tokenEnv?: string; tokenStdin?: boolean }) =>
+  ).action((pluginName: string, server: string, flags: ScopeFlags & { tokenEnv?: string; tokenStdin?: boolean }) =>
     withRuntime(async (rt) => {
       let credential: string | undefined;
       if (flags.tokenEnv) {
@@ -204,25 +204,25 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
         credential = (await deps.readStdin()).trim();
       }
       const conn = await rt.connections.connect({
-        bag: rt.harness(bagName).bag,
+        plugin: rt.harness(pluginName).plugin,
         server,
         ...connectionScope(flags),
         credential,
         by: "cli",
       });
-      log(`Connected ${bagName}:${server} at ${conn.scope}:${conn.scopeId} (${conn.id}).`);
+      log(`Connected ${pluginName}:${server} at ${conn.scope}:${conn.scopeId} (${conn.id}).`);
     }),
   );
 
   mcp
     .command("connections")
     .description("list connections (credentials are never shown)")
-    .option("--bag <name>", "only this bag")
-    .action((opts: { bag?: string }) =>
+    .option("--plugin <name>", "only this plugin")
+    .action((opts: { plugin?: string }) =>
       withStore(async (store) => {
-        for (const c of await store.listConnections({ bag: opts.bag })) {
+        for (const c of await store.listConnections({ plugin: opts.plugin })) {
           const cred = c.credential ? "credential" : "no credential";
-          log(`${c.id}  ${c.bag}:${c.server}  ${c.scope}:${c.scopeId}  ${cred}  by ${c.createdBy}`);
+          log(`${c.id}  ${c.plugin}:${c.server}  ${c.scope}:${c.scopeId}  ${cred}  by ${c.createdBy}`);
         }
       }),
     );
@@ -237,34 +237,34 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
     );
 
   mcp
-    .command("drift <bag>")
+    .command("drift <plugin>")
     .description("compare each pinned MCP server's live tools with the pin")
-    .action((bagName: string) =>
+    .action((pluginName: string) =>
       withRuntime(async (rt) => {
-        const drift = await rt.mcp.drift(rt.harness(bagName).bag);
+        const drift = await rt.mcp.drift(rt.harness(pluginName).plugin);
         if (!drift.length) return log("No drift.");
         for (const d of drift) log(`${d.server}.${d.tool}: ${d.detail}`);
-        log(`Re-pin with: saddlebags mcp repin ${bagName}`);
+        log(`Re-pin with: saddlebags mcp repin ${pluginName}`);
         setExit(1);
       }),
     );
 
   withScopeFlags(
     mcp
-      .command("repin <bag>")
+      .command("repin <plugin>")
       .description("run evals against live MCP definitions and pin them if the gate passes")
       .option("--min-pass-rate <rate>", "override the configured minimum pass rate", parseFloat),
-  ).action((bagName: string, flags: ScopeFlags & { minPassRate?: number }) =>
+  ).action((pluginName: string, flags: ScopeFlags & { minPassRate?: number }) =>
     withRuntime(async (rt) => {
-      const result = await rt.repin(bagName, {
+      const result = await rt.repin(pluginName, {
         minPassRate: flags.minPassRate,
         scope: flags.org ? scopeRef(flags) : undefined,
       });
       if (result.ok) {
-        log(`Re-pinned ${bagName}@${result.version}.`);
+        log(`Re-pinned ${pluginName}@${result.version}.`);
         printPins(result.pins, log);
       } else {
-        log(`Re-pin of ${bagName}@${result.version} blocked:`);
+        log(`Re-pin of ${pluginName}@${result.version} blocked:`);
         for (const r of result.reasons) log(`  - ${r}`);
         setExit(1);
       }
@@ -300,23 +300,23 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
   );
 
   program
-    .command("unpublish <bag> <version>")
-    .description("stop serving a bag version")
-    .action((bagName: string, version: string) =>
+    .command("unpublish <plugin> <version>")
+    .description("stop serving a plugin version")
+    .action((pluginName: string, version: string) =>
       withStore(async (store) => {
-        await new Lifecycle(store).unpublish(bagName, version, "cli");
-        log(`Unpublished ${bagName}@${version}.`);
+        await new Lifecycle(store).unpublish(pluginName, version, "cli");
+        log(`Unpublished ${pluginName}@${version}.`);
       }),
     );
 
   program
     .command("status")
-    .description("show configured bags and their release channels")
+    .description("show configured plugins and their release channels")
     .action(() =>
       withRuntime(async (rt) => {
-        for (const bag of rt.bags) {
-          const channel = (await rt.lifecycle.channelOf(bag.name, bag.version)) ?? "not installed";
-          log(`${bag.name}@${bag.version}  ${channel}  [${bag.routes.map((r) => r.operation).join(", ")}]`);
+        for (const plugin of rt.plugins) {
+          const channel = (await rt.lifecycle.channelOf(plugin.name, plugin.version)) ?? "not installed";
+          log(`${plugin.name}@${plugin.version}  ${channel}  [${plugin.routes.map((r) => r.operation).join(", ")}]`);
         }
       }),
     );
@@ -381,7 +381,7 @@ function buildProgram(deps: CliDeps, setExit: (code: number) => void): Command {
       if (!token) deps.error("Warning: SADDLEBAGS_TOKEN is not set; the API is unauthenticated (localhost only).");
       const port = opts.port ?? cfg.config.server?.port ?? 4848;
       await deps.listen(createApp(rt, { token }).fetch, port, host);
-      log(`SaddleBags listening on http://${host}:${port} with ${rt.bags.length} bag(s).`);
+      log(`SaddleBags listening on http://${host}:${port} with ${rt.plugins.length} plugin(s).`);
     });
 
   return program;
@@ -396,7 +396,7 @@ function printPins(pins: PinResult | undefined, log: (l: string) => void): void 
 }
 
 function printReport(report: EvalReport, log: (l: string) => void): void {
-  log(`${report.bag}@${report.version}: ${(report.passRate * 100).toFixed(0)}% passed`);
+  log(`${report.plugin}@${report.version}: ${(report.passRate * 100).toFixed(0)}% passed`);
   for (const c of report.cases) {
     log(`  ${c.pass ? "✓" : "✗"} ${c.caseId}${c.error ? `  (${c.error})` : ""}`);
     for (const g of c.graders) if (!g.pass) log(`      ${g.grader}: ${g.reason ?? "failed"}`);
@@ -419,8 +419,8 @@ function packageManagerAdd(root: string): string[] {
 const CONFIG_TEMPLATE = `import { defineConfig } from "@saddlebags/server";
 
 export default defineConfig({
-  // Bag packages to serve. Install with: saddlebags install <package>
-  bags: [],
+  // Plugin packages to serve. Install with: saddlebags install <package>
+  plugins: [],
 
   // SQLite by default. For Postgres:
   // store: { kind: "postgres", url: process.env.DATABASE_URL! },
@@ -433,7 +433,7 @@ export default defineConfig({
   // Decides model-decided rule conditions.
   selectorModel: "anthropic:claude-opus-5-5",
 
-  // The scope evals run as. Bags that use MCP servers need connections here.
+  // The scope evals run as. Plugins that use MCP servers need connections here.
   // evalScope: { orgId: "acme" },
 
   // Exact commands stdio MCP servers may run. Empty refuses all stdio servers.

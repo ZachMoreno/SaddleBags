@@ -11,11 +11,11 @@ See §4.12 of the [spec](../../SPEC.md).
 ```sh
 npm install @saddlebags/server
 npx saddlebags init                                  # writes saddlebags.config.ts
-npx saddlebags install @saddlebags/bag-video-brief-to-script --org acme
-# add the bag to `bags` in saddlebags.config.ts, then:
+npx saddlebags install @saddlebags/plugin-video-brief-to-script --org acme
+# add the plugin to `plugins` in saddlebags.config.ts, then:
 export ANTHROPIC_API_KEY=...
-npx saddlebags eval @saddlebags/bag-video-brief-to-script
-npx saddlebags promote @saddlebags/bag-video-brief-to-script
+npx saddlebags eval @saddlebags/plugin-video-brief-to-script
+npx saddlebags promote @saddlebags/plugin-video-brief-to-script
 SADDLEBAGS_TOKEN=$(openssl rand -hex 24) npx saddlebags serve --host 0.0.0.0
 ```
 
@@ -31,7 +31,7 @@ curl -X POST localhost:4848/operations/script.write \
 import { defineConfig } from "@saddlebags/server";
 
 export default defineConfig({
-  bags: ["@saddlebags/bag-video-brief-to-script"],
+  plugins: ["@saddlebags/plugin-video-brief-to-script"],
   store: { kind: "postgres", url: process.env.DATABASE_URL!, schema: "saddlebags" }, // default: SQLite
   providers: "env",                       // ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
   selectorModel: "anthropic:claude-opus-5-5",
@@ -46,23 +46,23 @@ export default defineConfig({
 
 | Route | Purpose |
 |-------|---------|
-| `GET /health` | Loaded bags and their channels (no auth) |
-| `POST /operations/:name` | `{ input, scope, bag?, channel?, history?, meta? }` → `{ output, traceId }`, or `422` with the rejections |
+| `GET /health` | Loaded plugins and their channels (no auth) |
+| `POST /operations/:name` | `{ input, scope, plugin?, channel?, history?, meta? }` → `{ output, traceId }`, or `422` with the rejections |
 | `GET /traces?operation=&limit=`, `GET /traces/:id` | Traces |
 | `GET /memory/proposals?status=`, `POST /memory/proposals/:id/{approve,reject}` | Memory review (`{ reviewer }`) |
-| `GET /bags`, `POST /bags/:name/{evals,promote,unpublish}` | Releases; URL-encode scoped names |
+| `GET /plugins`, `POST /plugins/:name/{evals,promote,unpublish}` | Releases; URL-encode scoped names |
 
 With `SADDLEBAGS_TOKEN` set, every route except `/health` needs
 `Authorization: Bearer <token>`. Without it, `serve` binds localhost only.
 
 ## MCP (§4.11 of the spec)
 
-### Using 3rd-party MCP servers in a bag
+### Using 3rd-party MCP servers in a plugin
 
-A bag declares the servers it needs; routes list the exact tools they offer.
+A plugin declares the servers it needs; routes list the exact tools they offer.
 
 ```ts
-defineBag({
+definePlugin({
   mcp: {
     servers: [
       { name: "github", transport: { kind: "http", url: "https://api.githubcopilot.com/mcp/" },
@@ -77,11 +77,11 @@ An admin connects it, per scope. The narrowest connection wins at runtime.
 
 ```sh
 export SADDLEBAGS_SECRET_KEY=$(openssl rand -hex 32)   # keep it: it decrypts stored credentials
-GITHUB_TOKEN=... npx saddlebags mcp connect @acme/research-bag github --org acme --token-env GITHUB_TOKEN
-npx saddlebags eval @acme/research-bag --org acme       # evals need a scope with connections
-npx saddlebags promote @acme/research-bag               # also pins the server's tool definitions
-npx saddlebags mcp drift @acme/research-bag             # changed tools are withheld until...
-npx saddlebags mcp repin @acme/research-bag --org acme  # ...a re-pin passes evals
+GITHUB_TOKEN=... npx saddlebags mcp connect @acme/research-plugin github --org acme --token-env GITHUB_TOKEN
+npx saddlebags eval @acme/research-plugin --org acme       # evals need a scope with connections
+npx saddlebags promote @acme/research-plugin               # also pins the server's tool definitions
+npx saddlebags mcp drift @acme/research-plugin             # changed tools are withheld until...
+npx saddlebags mcp repin @acme/research-plugin --org acme  # ...a re-pin passes evals
 ```
 
 stdio servers only run if their exact command is in `mcp.stdioAllowlist` in

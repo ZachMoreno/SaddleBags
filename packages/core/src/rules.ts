@@ -55,12 +55,12 @@ export async function selectRules(
   return fired;
 }
 
-/** Stable overlays may only add prose rules with non-code conditions. */
+/** Admin overlays may only add prose rules with non-code conditions. */
 export function assertOverlayRule(rule: Rule<any, any>): void {
   if (rule.directive.kind !== "prose") {
-    throw new Error(`Overlay rule ${rule.id}: only prose directives can be edited in the Stable`);
+    throw new Error(`Overlay rule ${rule.id}: only prose directives can be edited in the Admin`);
   }
   if (rule.condition.kind === "code") {
-    throw new Error(`Overlay rule ${rule.id}: code conditions must ship in a bag`);
+    throw new Error(`Overlay rule ${rule.id}: code conditions must ship in a plugin`);
   }
 }

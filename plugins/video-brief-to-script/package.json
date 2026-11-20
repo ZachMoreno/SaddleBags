@@ -1,5 +1,5 @@
 {
-  "name": "@saddlebags/bag-video-brief-to-script",
+  "name": "@saddlebags/plugin-video-brief-to-script",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",

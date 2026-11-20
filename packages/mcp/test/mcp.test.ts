@@ -5,7 +5,7 @@ import { serve } from "@hono/node-server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Harness, HarnessError, MockProvider, SqliteStore, type Store } from "@saddlebags/core";
-import { defineBag, type Bag } from "@saddlebags/sdk";
+import { definePlugin, type Plugin } from "@saddlebags/sdk";
 import {
   ApiTokens,
   ClientPool,
@@ -13,7 +13,7 @@ import {
   McpToolResolver,
   Secrets,
   handleMcpRequest,
-  validateBagMcp,
+  validatePluginMcp,
   type ExposedTool,
 } from "../src/index.js";
 import { fakeGithub } from "./fixtures/http-server.js";
@@ -21,9 +21,9 @@ import { fakeGithub } from "./fixtures/http-server.js";
 const KEY = "a".repeat(64);
 const STDIO_SERVER = fileURLToPath(new URL("./fixtures/stdio-server.mjs", import.meta.url));
 
-function githubBag(url: string, extra: Partial<Bag> = {}): Bag {
-  return defineBag({
-    name: "@acme/gh-bag",
+function githubPlugin(url: string, extra: Partial<Plugin> = {}): Plugin {
+  return definePlugin({
+    name: "@acme/gh-plugin",
     version: "1.0.0",
     mcp: {
       servers: [
@@ -59,15 +59,15 @@ describe("Secrets", () => {
   });
 });
 
-describe("validateBagMcp", () => {
+describe("validatePluginMcp", () => {
   it("checks server names, stdio token env, and route references", () => {
-    expect(() => validateBagMcp(githubBag("http://x"))).not.toThrow();
+    expect(() => validatePluginMcp(githubPlugin("http://x"))).not.toThrow();
     expect(() =>
-      validateBagMcp(githubBag("http://x", { routes: [{ operation: "a", model: "m:m", tools: ["jira.search"] }] })),
+      validatePluginMcp(githubPlugin("http://x", { routes: [{ operation: "a", model: "m:m", tools: ["jira.search"] }] })),
     ).toThrow(/undeclared MCP server "jira"/);
     expect(() =>
-      validateBagMcp(
-        defineBag({
+      validatePluginMcp(
+        definePlugin({
           name: "b",
           version: "1",
           routes: [],
@@ -98,28 +98,28 @@ describe("3rd-party MCP through the harness", () => {
   });
 
   it("stores credentials encrypted and only at allowed scopes", async () => {
-    const bag = githubBag(gh.url);
-    const c = await connections.connect({ bag, server: "github", scope: "org", scopeId: "acme", credential: "org-tok", by: "admin" });
+    const plugin = githubPlugin(gh.url);
+    const c = await connections.connect({ plugin, server: "github", scope: "org", scopeId: "acme", credential: "org-tok", by: "admin" });
     expect(c.credential).not.toContain("org-tok");
     expect(connections.credentialFor(c)).toBe("org-tok");
     await expect(
-      connections.connect({ bag, server: "github", scope: "group", scopeId: "g", credential: "x", by: "admin" }),
+      connections.connect({ plugin, server: "github", scope: "group", scopeId: "g", credential: "x", by: "admin" }),
     ).rejects.toThrow(/org, user, not group/);
-    await expect(connections.connect({ bag, server: "github", scope: "org", scopeId: "acme", by: "admin" })).rejects.toThrow(
+    await expect(connections.connect({ plugin, server: "github", scope: "org", scopeId: "acme", by: "admin" })).rejects.toThrow(
       /credential is required/,
     );
     await expect(
-      new Connections(store).connect({ bag, server: "github", scope: "org", scopeId: "a", credential: "x", by: "a" }),
+      new Connections(store).connect({ plugin, server: "github", scope: "org", scopeId: "a", credential: "x", by: "a" }),
     ).rejects.toThrow(/SADDLEBAGS_SECRET_KEY/);
   });
 
   it("calls the tool over HTTP with the narrowest connection's credential", async () => {
-    const bag = githubBag(gh.url);
-    await connections.connect({ bag, server: "github", scope: "org", scopeId: "acme", credential: "org-tok", by: "admin" });
+    const plugin = githubPlugin(gh.url);
+    await connections.connect({ plugin, server: "github", scope: "org", scopeId: "acme", credential: "org-tok", by: "admin" });
     const scope = { orgId: "acme", userId: "u1" };
 
     const asOrg = await new Harness({
-      bag,
+      plugin,
       providers: [callsOnce("github__search_issues", { q: "bug" })],
       mcp: resolver,
     }).run("ask", "find bugs", { scope });
@@ -132,9 +132,9 @@ describe("3rd-party MCP through the harness", () => {
     });
     expect(gh.state.calls.at(-1)).toMatchObject({ auth: "Bearer org-tok" });
 
-    await connections.connect({ bag, server: "github", scope: "user", scopeId: "u1", credential: "user-tok", by: "u1" });
+    await connections.connect({ plugin, server: "github", scope: "user", scopeId: "u1", credential: "user-tok", by: "u1" });
     const asUser = await new Harness({
-      bag,
+      plugin,
       providers: [callsOnce("github__search_issues", { q: "bug" })],
       mcp: resolver,
     }).run("ask", "find bugs", { scope });
@@ -147,10 +147,10 @@ describe("3rd-party MCP through the harness", () => {
   });
 
   it("offers only route-listed tools, and validates arguments against the advertised schema", async () => {
-    const bag = githubBag(gh.url);
-    await connections.connect({ bag, server: "github", scope: "org", scopeId: "acme", credential: "t", by: "a" });
+    const plugin = githubPlugin(gh.url);
+    await connections.connect({ plugin, server: "github", scope: "org", scopeId: "acme", credential: "t", by: "a" });
     const p = callsOnce("github__search_issues", { q: 42 });
-    const { trace } = await new Harness({ bag, providers: [p], mcp: resolver }).run("ask", "x", { scope: { orgId: "acme" } });
+    const { trace } = await new Harness({ plugin, providers: [p], mcp: resolver }).run("ask", "x", { scope: { orgId: "acme" } });
     expect(p.calls[0]!.tools!.map((t) => t.name)).toEqual(["github__search_issues"]);
     expect(trace.attempts[0]!.toolCalls![0]!.error).toMatch(/Invalid arguments: args\/q must be string/);
     expect(gh.state.calls).toEqual([]);
@@ -158,7 +158,7 @@ describe("3rd-party MCP through the harness", () => {
 
   it("fails before calling the model when a required server isn't connected", async () => {
     const p = new MockProvider("mock", () => "never");
-    const err = await new Harness({ bag: githubBag(gh.url), providers: [p], mcp: resolver })
+    const err = await new Harness({ plugin: githubPlugin(gh.url), providers: [p], mcp: resolver })
       .run("ask", "x", { scope: { orgId: "acme", userId: "u1" } })
       .catch((e) => e);
     expect(err).toBeInstanceOf(HarnessError);
@@ -167,10 +167,10 @@ describe("3rd-party MCP through the harness", () => {
   });
 
   it("pins on demand, withholds drifted tools, and re-pins", async () => {
-    const bag = githubBag(gh.url);
-    await connections.connect({ bag, server: "github", scope: "org", scopeId: "acme", credential: "t", by: "a" });
+    const plugin = githubPlugin(gh.url);
+    await connections.connect({ plugin, server: "github", scope: "org", scopeId: "acme", credential: "t", by: "a" });
     const run = (r: McpToolResolver) =>
-      new Harness({ bag, providers: [new MockProvider("mock", () => "ok")], mcp: r }).run("ask", "x", {
+      new Harness({ plugin, providers: [new MockProvider("mock", () => "ok")], mcp: r }).run("ask", "x", {
         scope: { orgId: "acme" },
       });
 
@@ -178,7 +178,7 @@ describe("3rd-party MCP through the harness", () => {
       expect.objectContaining({ kind: "mcp.unpinned", server: "github" }),
     ]);
 
-    const { pinned, skipped } = await resolver.pin(bag);
+    const { pinned, skipped } = await resolver.pin(plugin);
     expect(pinned).toEqual(["github"]);
     expect(skipped).toEqual([{ server: "local", reason: "not connected at any scope" }]);
     expect((await run(resolver)).trace.notes).toBeUndefined();
@@ -188,36 +188,36 @@ describe("3rd-party MCP through the harness", () => {
     expect(drifted.trace.notes).toEqual([
       { kind: "mcp.drift", server: "github", tool: "search_issues", detail: "description changed; withheld until re-pinned" },
     ]);
-    expect(await resolver.drift(bag)).toEqual([{ server: "github", tool: "search_issues", detail: "description changed" }]);
+    expect(await resolver.drift(plugin)).toEqual([{ server: "github", tool: "search_issues", detail: "description changed" }]);
 
     // A re-pin eval run sees the live definitions...
     expect((await run(resolver.withIgnorePins())).trace.notes).toBeUndefined();
     // ...and after re-pinning, normal runs offer the tool again.
-    await resolver.pin(bag);
+    await resolver.pin(plugin);
     expect((await run(resolver)).trace.notes).toBeUndefined();
   });
 
   it("runs stdio servers only from the allowlist, passing the credential via env", async () => {
-    const bag = githubBag(gh.url, {
+    const plugin = githubPlugin(gh.url, {
       routes: [{ operation: "who", model: "mock:m", tools: ["local.whoami"] }],
     });
     const scope = { orgId: "acme" };
     // Optional and unconnected: left out with a note.
-    const unconnected = await new Harness({ bag, providers: [new MockProvider("mock", () => "ok")], mcp: resolver }).run(
+    const unconnected = await new Harness({ plugin, providers: [new MockProvider("mock", () => "ok")], mcp: resolver }).run(
       "who",
       "x",
       { scope },
     );
     expect(unconnected.trace.notes![0]).toMatchObject({ kind: "mcp.omitted", server: "local", tool: "whoami" });
 
-    await connections.connect({ bag, server: "local", scope: "org", scopeId: "acme", credential: "stdio-tok", by: "a" });
-    const { trace } = await new Harness({ bag, providers: [callsOnce("local__whoami", {})], mcp: resolver }).run("who", "x", {
+    await connections.connect({ plugin, server: "local", scope: "org", scopeId: "acme", credential: "stdio-tok", by: "a" });
+    const { trace } = await new Harness({ plugin, providers: [callsOnce("local__whoami", {})], mcp: resolver }).run("who", "x", {
       scope,
     });
     expect(trace.attempts[0]!.toolCalls![0]!.result).toBe("token=stdio-tok");
 
     const locked = new McpToolResolver({ store, connections, pool: new ClientPool({ stdioAllowlist: [] }) });
-    const omitted = await new Harness({ bag, providers: [new MockProvider("mock", () => "ok")], mcp: locked }).run(
+    const omitted = await new Harness({ plugin, providers: [new MockProvider("mock", () => "ok")], mcp: locked }).run(
       "who",
       "x",
       { scope },
@@ -244,7 +244,7 @@ describe("handleMcpRequest", () => {
   it("serves tools to a real MCP client over streamable HTTP", async () => {
     const tools: ExposedTool[] = [
       {
-        name: "bag__echo",
+        name: "plugin__echo",
         description: "Echo",
         inputSchema: { type: "object", properties: { s: { type: "string" } } },
         outputSchema: { type: "object", properties: { s: { type: "string" } } },
@@ -261,10 +261,10 @@ describe("handleMcpRequest", () => {
     const client = new Client({ name: "test", version: "1" });
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
     try {
-      expect((await client.listTools()).tools.map((t) => t.name)).toEqual(["bag__echo"]);
-      const ok = await client.callTool({ name: "bag__echo", arguments: { s: "hi" } });
+      expect((await client.listTools()).tools.map((t) => t.name)).toEqual(["plugin__echo"]);
+      const ok = await client.callTool({ name: "plugin__echo", arguments: { s: "hi" } });
       expect(ok.structuredContent).toEqual({ s: "hi" });
-      const bad = await client.callTool({ name: "bag__echo", arguments: { s: "fail" } });
+      const bad = await client.callTool({ name: "plugin__echo", arguments: { s: "fail" } });
       expect(bad.isError).toBe(true);
       const unknown = await client.callTool({ name: "nope", arguments: {} });
       expect(unknown.isError).toBe(true);

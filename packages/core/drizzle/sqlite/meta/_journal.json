@@ -15,6 +15,13 @@
       "when": 1795057249283,
       "tag": "0001_mcp",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795143573510,
+      "tag": "0002_rename_bags_to_plugins",
+      "breakpoints": true
     }
   ]
 }

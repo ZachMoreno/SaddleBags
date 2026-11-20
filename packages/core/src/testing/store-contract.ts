@@ -51,8 +51,8 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
     it("round-trips traces, including nested JSON and booleans, newest last", async () => {
       const base = {
         operation: "op",
-        bag: "b",
-        bagVersion: "1.0.0",
+        plugin: "b",
+        pluginVersion: "1.0.0",
         scope: "acme/u1",
         model: "mock:m",
         fired: [{ ruleId: "r", reason: "always" }],
@@ -69,7 +69,7 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
       expect((await store.listTraces({ limit: 1 })).map((t) => t.id)).toEqual([t3.id]);
     });
 
-    it("upserts installs by bag + version", async () => {
+    it("upserts installs by plugin + version", async () => {
       await store.setInstall("b", "1.0.0", "rc");
       await store.setInstall("b", "1.0.0", "latest");
       await store.setInstall("c", "2.0.0", "rc");
@@ -77,9 +77,9 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
       expect(await store.listInstalls()).toHaveLength(2);
     });
 
-    it("returns the latest eval run per bag version", async () => {
+    it("returns the latest eval run per plugin version", async () => {
       const report = (passRate: number): EvalReport => ({
-        bag: "b",
+        plugin: "b",
         version: "1.0.0",
         passRate,
         cases: [{ caseId: "c", pass: passRate === 1, graders: [] }],
@@ -93,7 +93,7 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
     });
 
     it("stores a trace's caller and notes, and omits them when unset", async () => {
-      const base = { operation: "op", bag: "b", bagVersion: "1", scope: "o", model: "m", fired: [], attempts: [], ok: true };
+      const base = { operation: "op", plugin: "b", pluginVersion: "1", scope: "o", model: "m", fired: [], attempts: [], ok: true };
       const notes = [{ kind: "mcp.drift" as const, server: "gh", tool: "search", detail: "description changed" }];
       const a = await store.putTrace({ ...base, caller: "mcp:tok1", notes });
       const b = await store.putTrace(base);
@@ -103,15 +103,15 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
       expect(got).not.toHaveProperty("notes");
     });
 
-    it("upserts MCP connections by bag + server + scope, filters, and deletes", async () => {
-      const a = await store.putConnection({ bag: "b", server: "gh", scope: "org", scopeId: "acme", credential: "enc1", createdBy: "x" });
-      const a2 = await store.putConnection({ bag: "b", server: "gh", scope: "org", scopeId: "acme", credential: "enc2", createdBy: "y" });
-      await store.putConnection({ bag: "b", server: "gh", scope: "user", scopeId: "u1", credential: null, createdBy: "x" });
-      await store.putConnection({ bag: "b", server: "ff", scope: "org", scopeId: "acme", credential: null, createdBy: "x" });
+    it("upserts MCP connections by plugin + server + scope, filters, and deletes", async () => {
+      const a = await store.putConnection({ plugin: "b", server: "gh", scope: "org", scopeId: "acme", credential: "enc1", createdBy: "x" });
+      const a2 = await store.putConnection({ plugin: "b", server: "gh", scope: "org", scopeId: "acme", credential: "enc2", createdBy: "y" });
+      await store.putConnection({ plugin: "b", server: "gh", scope: "user", scopeId: "u1", credential: null, createdBy: "x" });
+      await store.putConnection({ plugin: "b", server: "ff", scope: "org", scopeId: "acme", credential: null, createdBy: "x" });
 
       expect(a2.id).toBe(a.id);
       expect(a2.credential).toBe("enc2");
-      expect((await store.listConnections({ bag: "b", server: "gh" })).map((c) => [c.scope, c.credential])).toEqual([
+      expect((await store.listConnections({ plugin: "b", server: "gh" })).map((c) => [c.scope, c.credential])).toEqual([
         ["org", "enc2"],
         ["user", null],
       ]);
@@ -121,12 +121,12 @@ export function storeContract(name: string, open: () => Store | Promise<Store>):
       expect(await store.listConnections({ server: "gh" })).toHaveLength(1);
     });
 
-    it("upserts pins per bag version and server", async () => {
+    it("upserts pins per plugin version and server", async () => {
       const tools = [{ name: "search", description: "Search issues", schemaHash: "h1" }];
-      await store.setPin({ bag: "b", version: "1", server: "gh", tools });
-      await store.setPin({ bag: "b", version: "1", server: "gh", tools: [{ ...tools[0]!, schemaHash: "h2" }] });
-      await store.setPin({ bag: "b", version: "1", server: "ff", tools: [] });
-      await store.setPin({ bag: "b", version: "2", server: "gh", tools });
+      await store.setPin({ plugin: "b", version: "1", server: "gh", tools });
+      await store.setPin({ plugin: "b", version: "1", server: "gh", tools: [{ ...tools[0]!, schemaHash: "h2" }] });
+      await store.setPin({ plugin: "b", version: "1", server: "ff", tools: [] });
+      await store.setPin({ plugin: "b", version: "2", server: "gh", tools });
 
       const pins = await store.listPins("b", "1");
       expect(pins.map((p) => p.server)).toEqual(["ff", "gh"]);

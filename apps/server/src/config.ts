@@ -2,15 +2,15 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Bag, ModelProvider, ScopeRef } from "@saddlebags/sdk";
+import type { Plugin, ModelProvider, ScopeRef } from "@saddlebags/sdk";
 
 export type StoreConfig =
   | { kind: "sqlite"; /** Relative to the config file. Default `.saddlebags/saddlebags.db`. */ path?: string }
   | { kind: "postgres"; url: string; /** Default `public`. */ schema?: string };
 
 export interface SaddlebagsConfig {
-  /** Bag package names (resolved from the project's node_modules), or bag objects. */
-  bags: Array<string | Bag>;
+  /** Plugin package names (resolved from the project's node_modules), or plugin objects. */
+  plugins: Array<string | Plugin>;
   /** Default: SQLite at `.saddlebags/saddlebags.db`. */
   store?: StoreConfig;
   /** `"env"` (default) registers every provider whose API key is set. */
@@ -20,7 +20,7 @@ export interface SaddlebagsConfig {
   /** Minimum eval pass rate for promotion. Default 1. */
   minPassRate?: number;
   /**
-   * The scope evals run as. Default `{ orgId: "eval" }`. Bags with required
+   * The scope evals run as. Default `{ orgId: "eval" }`. Plugins with required
    * MCP servers need a scope that holds connections to them.
    */
   evalScope?: ScopeRef;
@@ -39,7 +39,7 @@ export const CONFIG_FILES = ["saddlebags.config.ts", "saddlebags.config.mjs", "s
 
 export interface LoadedConfig {
   config: SaddlebagsConfig;
-  /** Directory holding the config file; bags and relative paths resolve from here. */
+  /** Directory holding the config file; plugins and relative paths resolve from here. */
   root: string;
 }
 
@@ -50,7 +50,7 @@ export async function loadConfig(cwd = process.cwd(), explicit?: string): Promis
     throw new Error(`No ${CONFIG_FILES[0]} found in ${cwd} or its parents. Run \`saddlebags init\` to create one.`);
   }
   const mod = (await import(pathToFileURL(file).href)) as { default?: SaddlebagsConfig };
-  if (!mod.default?.bags) throw new Error(`${file} must default-export defineConfig({ bags: [...] })`);
+  if (!mod.default?.plugins) throw new Error(`${file} must default-export defineConfig({ plugins: [...] })`);
   return { config: mod.default, root: dirname(file) };
 }
 
@@ -65,22 +65,22 @@ function findConfig(from: string): string | undefined {
 }
 
 /**
- * Import a bag package as the project sees it: resolved from `root`'s
+ * Import a plugin package as the project sees it: resolved from `root`'s
  * node_modules (not the server's), honoring the package's ESM `exports`.
  */
-export async function importBag(name: string, root: string): Promise<Bag> {
+export async function importPlugin(name: string, root: string): Promise<Plugin> {
   const pkgDir = findPackageDir(name, root);
-  if (!pkgDir) throw new Error(`Bag package "${name}" is not installed in ${root}. Run \`saddlebags install ${name}\`.`);
+  if (!pkgDir) throw new Error(`Plugin package "${name}" is not installed in ${root}. Run \`saddlebags install ${name}\`.`);
   const pkg = JSON.parse(await readFile(join(pkgDir, "package.json"), "utf8")) as {
     version: string;
     main?: string;
     exports?: unknown;
   };
   const entry = esmEntry(pkg) ?? "index.js";
-  const mod = (await import(pathToFileURL(join(pkgDir, entry)).href)) as { default?: Bag };
-  const bag = mod.default;
-  if (!bag?.routes) throw new Error(`"${name}" does not default-export a bag (defineBag({...}))`);
-  return bag;
+  const mod = (await import(pathToFileURL(join(pkgDir, entry)).href)) as { default?: Plugin };
+  const plugin = mod.default;
+  if (!plugin?.routes) throw new Error(`"${name}" does not default-export a plugin (definePlugin({...}))`);
+  return plugin;
 }
 
 export function findPackageDir(name: string, root: string): string | undefined {

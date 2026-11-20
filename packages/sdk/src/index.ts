@@ -1,7 +1,7 @@
 /**
- * @saddlebags/sdk — authoring types for SaddleBags bags.
+ * @saddlebags/sdk — authoring types for SaddleBags plugins.
  *
- * MIT licensed so that bags (including proprietary ones) can be written
+ * MIT licensed so that plugins (including proprietary ones) can be written
  * against it freely. The runtime lives in @saddlebags/core (AGPL-3.0).
  */
 import type { z } from "zod";
@@ -80,15 +80,15 @@ export type Directive<I = unknown, O = unknown> =
 
 export interface Rule<I = unknown, O = unknown> {
   id: string;
-  /** Human-readable summary, shown in the Stable. */
+  /** Human-readable summary, shown in the Admin. */
   title?: string;
   /** Operations this rule is scoped to. Omit for all operations. */
   operations?: string[];
   condition: Condition<I>;
   directive: Directive<I, O>;
   authoredBy?: Author;
-  /** Where the rule may be edited: only in code, or also as a Stable overlay. */
-  editableIn?: "code" | "stable";
+  /** Where the rule may be edited: only in code, or also as a Admin overlay. */
+  editableIn?: "code" | "admin";
 }
 
 // ─── Tools ────────────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ export interface ModelRoute<S extends z.ZodType = z.ZodType> {
   /** Max attempts when enforce directives reject. Default 3. */
   maxAttempts?: number;
   /**
-   * Tools this operation's model may call. Default none. Bag tools by name
+   * Tools this operation's model may call. Default none. Plugin tools by name
    * (`footage_search`); MCP tools as `<server>.<tool>` (`github.search_issues`).
    */
   tools?: string[];
@@ -192,14 +192,14 @@ export interface ModelRoute<S extends z.ZodType = z.ZodType> {
   /** Expose this operation as a tool on the server's `/mcp` endpoint. */
   mcp?: {
     expose: boolean;
-    /** MCP tool name. Default `<bag>__<operation>`, sanitized. */
+    /** MCP tool name. Default `<plugin>__<operation>`, sanitized. */
     name?: string;
     /** MCP tool description. Default: the route's system prompt. */
     description?: string;
   };
 }
 
-// ─── MCP (3rd-party servers a bag uses) ───────────────────────────────────
+// ─── MCP (3rd-party servers a plugin uses) ───────────────────────────────────
 
 export type McpTransport =
   | {
@@ -224,7 +224,7 @@ export interface McpServerDecl {
   /**
    * How a connection authenticates. `oauth` and `token` both store a
    * credential (sent as `Authorization: Bearer`, or via `tokenEnv` for stdio).
-   * Interactive OAuth flows arrive with the Stable (M4).
+   * Interactive OAuth flows arrive with the Admin (M4).
    */
   auth: "oauth" | "token" | "none";
   /** Scopes allowed to hold a connection. Default `["org"]`. */
@@ -272,9 +272,9 @@ export interface EvalCase<I = unknown, O = unknown> {
   graders: Grader<O>[];
 }
 
-// ─── Bag ──────────────────────────────────────────────────────────────────
+// ─── Plugin ──────────────────────────────────────────────────────────────────
 
-export interface Bag {
+export interface Plugin {
   name: string;
   version: string;
   description?: string;
@@ -289,7 +289,7 @@ export interface Bag {
 
 // ─── define* helpers (identity functions for inference) ───────────────────
 
-export const defineBag = (bag: Bag): Bag => bag;
+export const definePlugin = (plugin: Plugin): Plugin => plugin;
 export const defineRule = <I = unknown, O = unknown>(rule: Rule<I, O>): Rule<I, O> => rule;
 export const defineTool = <S extends z.ZodType, R>(tool: Tool<S, R>): Tool<S, R> => tool;
 export const defineRoute = <S extends z.ZodType>(route: ModelRoute<S>): ModelRoute<S> => route;

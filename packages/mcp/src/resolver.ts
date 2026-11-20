@@ -11,7 +11,7 @@ import {
   type Store,
   type TraceNote,
 } from "@saddlebags/core";
-import type { Bag, McpServerDecl, OperationContext } from "@saddlebags/sdk";
+import type { Plugin, McpServerDecl, OperationContext } from "@saddlebags/sdk";
 import { Connections, candidateScopes, serverDecl } from "./connections.js";
 import type { ClientPool, LiveTool } from "./pool.js";
 import { hashJson } from "./secrets.js";
@@ -46,7 +46,7 @@ export interface ResolverOptions {
 /**
  * Resolves a route's MCP tools for one run (§4.11): finds the caller's
  * narrowest connection per server, lists the live tools, and withholds any
- * that drifted from the bag version's pin.
+ * that drifted from the plugin version's pin.
  */
 export class McpToolResolver implements ExternalToolResolver {
   private ajv = new Ajv({ strict: false, allErrors: true });
@@ -58,21 +58,21 @@ export class McpToolResolver implements ExternalToolResolver {
     return new McpToolResolver({ ...this.opts, ignorePins: true });
   }
 
-  async resolve(bag: Bag, names: string[], ctx: OperationContext): Promise<ExternalToolSet> {
+  async resolve(plugin: Plugin, names: string[], ctx: OperationContext): Promise<ExternalToolSet> {
     const byServer = new Map<string, string[]>();
     for (const n of names) {
       const [server, tool] = n.split(".") as [string, string];
       byServer.set(server, [...(byServer.get(server) ?? []), tool]);
     }
-    const pins = new Map((await this.opts.store.listPins(bag.name, bag.version)).map((p) => [p.server, p] as const));
+    const pins = new Map((await this.opts.store.listPins(plugin.name, plugin.version)).map((p) => [p.server, p] as const));
 
     const tools: ExternalTool[] = [];
     const notes: TraceNote[] = [];
     for (const [server, wanted] of byServer) {
-      const decl = serverDecl(bag, server);
+      const decl = serverDecl(plugin, server);
       const omit = (detail: string) => wanted.forEach((tool) => notes.push({ kind: "mcp.omitted", server, tool, detail }));
 
-      const conn = await this.opts.connections.resolve(bag, decl, ctx.scope);
+      const conn = await this.opts.connections.resolve(plugin, decl, ctx.scope);
       if (!conn) {
         if (!decl.optional) throw new McpNotConnectedError(server, candidateScopes(decl, ctx.scope));
         omit("not connected for this caller's scope (optional server)");
@@ -92,7 +92,7 @@ export class McpToolResolver implements ExternalToolResolver {
 
       const pin = pins.get(server);
       if (!pin && !this.opts.ignorePins) {
-        notes.push({ kind: "mcp.unpinned", server, detail: `no pin for ${bag.name}@${bag.version}; using live definitions` });
+        notes.push({ kind: "mcp.unpinned", server, detail: `no pin for ${plugin.name}@${plugin.version}; using live definitions` });
       }
       for (const name of wanted) {
         const t = live.find((x) => x.name === name);
@@ -112,22 +112,22 @@ export class McpToolResolver implements ExternalToolResolver {
   }
 
   /**
-   * Pin each declared server's live tools for this bag version. Uses any
+   * Pin each declared server's live tools for this plugin version. Uses any
    * connection for the server, since definitions aren't caller-specific.
    * Returns the servers it couldn't pin, and why.
    */
-  async pin(bag: Bag): Promise<{ pinned: McpPin["server"][]; skipped: Array<{ server: string; reason: string }> }> {
+  async pin(plugin: Plugin): Promise<{ pinned: McpPin["server"][]; skipped: Array<{ server: string; reason: string }> }> {
     const pinned: string[] = [];
     const skipped: Array<{ server: string; reason: string }> = [];
-    for (const decl of bag.mcp?.servers ?? []) {
-      const conn = await this.opts.connections.any(bag, decl.name);
+    for (const decl of plugin.mcp?.servers ?? []) {
+      const conn = await this.opts.connections.any(plugin, decl.name);
       if (!conn) {
         skipped.push({ server: decl.name, reason: "not connected at any scope" });
         continue;
       }
       try {
         const live = await this.opts.pool.listTools(conn, decl, this.opts.connections.credentialFor(conn));
-        await this.opts.store.setPin({ bag: bag.name, version: bag.version, server: decl.name, tools: snapshot(live) });
+        await this.opts.store.setPin({ plugin: plugin.name, version: plugin.version, server: decl.name, tools: snapshot(live) });
         pinned.push(decl.name);
       } catch (e) {
         skipped.push({ server: decl.name, reason: (e as Error).message });
@@ -137,12 +137,12 @@ export class McpToolResolver implements ExternalToolResolver {
   }
 
   /** Compare every declared server's live tools with its pin (for status displays). */
-  async drift(bag: Bag): Promise<Array<{ server: string; tool: string; detail: string }>> {
+  async drift(plugin: Plugin): Promise<Array<{ server: string; tool: string; detail: string }>> {
     const out: Array<{ server: string; tool: string; detail: string }> = [];
-    const pins = await this.opts.store.listPins(bag.name, bag.version);
+    const pins = await this.opts.store.listPins(plugin.name, plugin.version);
     for (const pin of pins) {
-      const decl = bag.mcp?.servers.find((s) => s.name === pin.server);
-      const conn = decl && (await this.opts.connections.any(bag, pin.server));
+      const decl = plugin.mcp?.servers.find((s) => s.name === pin.server);
+      const conn = decl && (await this.opts.connections.any(plugin, pin.server));
       if (!decl || !conn) continue;
       const live = await this.opts.pool.listTools(conn, decl, this.opts.connections.credentialFor(conn));
       for (const p of pin.tools) {

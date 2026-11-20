@@ -17,7 +17,7 @@ export interface CaseResult {
 }
 
 export interface EvalReport {
-  bag: string;
+  plugin: string;
   version: string;
   passRate: number;
   cases: CaseResult[];
@@ -32,9 +32,9 @@ export interface EvalOptions {
   caller?: string;
 }
 
-/** Run a bag's golden cases against a harness. */
+/** Run a plugin's golden cases against a harness. */
 export async function runEvals(harness: Harness, opts: EvalOptions = {}): Promise<EvalReport> {
-  const cases = opts.cases ?? harness.bag.evals ?? [];
+  const cases = opts.cases ?? harness.plugin.evals ?? [];
   const scope = opts.scope ?? { orgId: "eval" };
   const judges = new Map((opts.judges ?? []).map((p) => [p.id, p]));
   const results: CaseResult[] = [];
@@ -64,8 +64,8 @@ export async function runEvals(harness: Harness, opts: EvalOptions = {}): Promis
 
   const passed = results.filter((r) => r.pass).length;
   return {
-    bag: harness.bag.name,
-    version: harness.bag.version,
+    plugin: harness.plugin.name,
+    version: harness.plugin.version,
     passRate: cases.length ? passed / cases.length : 1,
     cases: results,
   };

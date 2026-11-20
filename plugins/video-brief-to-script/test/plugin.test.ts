@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Harness, MockProvider, runEvals } from "@saddlebags/core";
-import bag, { normalizeAspect, type Script } from "../src/index.js";
+import plugin, { normalizeAspect, type Script } from "../src/index.js";
 
 const shots = (n: number, seconds: number) =>
   Array.from({ length: n }, (_, i) => ({ seconds, visual: `shot ${i}`, voiceover: `line ${i}` }));
@@ -10,7 +10,7 @@ const input = (targetSeconds: number, audience = "commuters") => ({
   classification: { format: "ad" as const, audience, targetSeconds, aspect: "9:16" },
 });
 
-describe("video-brief-to-script bag", () => {
+describe("video-brief-to-script plugin", () => {
   it("normalizes aspect aliases", () => {
     expect(normalizeAspect("Vertical")).toBe("9:16");
     expect(normalizeAspect("16x9")).toBe("16:9");
@@ -23,7 +23,7 @@ describe("video-brief-to-script bag", () => {
         ? '{"ruleIds": []}'
         : JSON.stringify({ title: "t", aspect: "9:16", shots: shots(20, 4.5) }),
     );
-    const h = new Harness({ bag, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
+    const h = new Harness({ plugin, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
     const long = await h.run<Script>("script.write", input(90), { scope: { orgId: "o" } });
     expect(long.trace.fired.map((f) => f.ruleId)).toContain("long-form-pacing");
     const writeCall = provider.calls.find((c) => c.system.startsWith("You write"))!;
@@ -38,7 +38,7 @@ describe("video-brief-to-script bag", () => {
       // First draft is 60s for a 30s target; the second fits.
       return JSON.stringify({ title: "t", aspect: "vertical", shots: n === 1 ? shots(10, 6) : shots(10, 3) });
     });
-    const h = new Harness({ bag, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
+    const h = new Harness({ plugin, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
     const { output, trace } = await h.run<Script>("script.write", input(30, "kids 8-12"), {
       scope: { orgId: "o" },
     });
@@ -55,7 +55,7 @@ describe("video-brief-to-script bag", () => {
       const target = req.messages[0]!.content.includes("90-second") ? 90 : 30;
       return JSON.stringify({ title: "t", aspect: target === 90 ? "16:9" : "9:16", shots: shots(target / 3, 3) });
     });
-    const h = new Harness({ bag, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
+    const h = new Harness({ plugin, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
     const report = await runEvals(h, { judges: [provider] });
     expect(report.passRate).toBe(1);
   });
@@ -68,7 +68,7 @@ describe("video-brief-to-script bag", () => {
       }
       return JSON.stringify({ title: "t", aspect: "9:16", shots: shots(10, 3) });
     });
-    const h = new Harness({ bag, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
+    const h = new Harness({ plugin, providers: [provider], selectorModel: "anthropic:claude-opus-5-5" });
     const { trace } = await h.run<Script>("script.write", input(30), { scope: { orgId: "o" } });
     const call = trace.attempts[0]!.toolCalls![0]!;
     expect(call.args).toEqual({ query: "commute train", aspect: "9:16" });

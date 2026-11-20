@@ -1,29 +1,29 @@
 import type { McpConnection, Store } from "@saddlebags/core";
-import { SCOPES, type Bag, type McpServerDecl, type Scope, type ScopeRef } from "@saddlebags/sdk";
+import { SCOPES, type Plugin, type McpServerDecl, type Scope, type ScopeRef } from "@saddlebags/sdk";
 import type { Secrets } from "./secrets.js";
 
 const NAME = /^[A-Za-z0-9_-]+$/;
 
-/** Find a bag's declaration of a server, or throw. */
-export function serverDecl(bag: Bag, server: string): McpServerDecl {
-  const decl = bag.mcp?.servers.find((s) => s.name === server);
-  if (!decl) throw new Error(`Bag ${bag.name} declares no MCP server "${server}"`);
+/** Find a plugin's declaration of a server, or throw. */
+export function serverDecl(plugin: Plugin, server: string): McpServerDecl {
+  const decl = plugin.mcp?.servers.find((s) => s.name === server);
+  if (!decl) throw new Error(`Plugin ${plugin.name} declares no MCP server "${server}"`);
   return decl;
 }
 
-/** Check a bag's MCP declarations and that every route's MCP tools name a declared server. */
-export function validateBagMcp(bag: Bag): void {
+/** Check a plugin's MCP declarations and that every route's MCP tools name a declared server. */
+export function validatePluginMcp(plugin: Plugin): void {
   const names = new Set<string>();
-  for (const s of bag.mcp?.servers ?? []) {
-    if (!NAME.test(s.name)) throw new Error(`Bag ${bag.name}: MCP server name "${s.name}" must match ${NAME}`);
-    if (s.name.includes("__")) throw new Error(`Bag ${bag.name}: MCP server name "${s.name}" can't contain "__"`);
-    if (names.has(s.name)) throw new Error(`Bag ${bag.name}: MCP server "${s.name}" is declared twice`);
+  for (const s of plugin.mcp?.servers ?? []) {
+    if (!NAME.test(s.name)) throw new Error(`Plugin ${plugin.name}: MCP server name "${s.name}" must match ${NAME}`);
+    if (s.name.includes("__")) throw new Error(`Plugin ${plugin.name}: MCP server name "${s.name}" can't contain "__"`);
+    if (names.has(s.name)) throw new Error(`Plugin ${plugin.name}: MCP server "${s.name}" is declared twice`);
     names.add(s.name);
     if (s.transport.kind === "stdio" && s.auth !== "none" && !s.transport.tokenEnv) {
-      throw new Error(`Bag ${bag.name}: stdio MCP server "${s.name}" needs transport.tokenEnv for auth "${s.auth}"`);
+      throw new Error(`Plugin ${plugin.name}: stdio MCP server "${s.name}" needs transport.tokenEnv for auth "${s.auth}"`);
     }
   }
-  for (const route of bag.routes) {
+  for (const route of plugin.routes) {
     for (const t of route.tools ?? []) {
       if (!t.includes(".")) continue;
       const [server, tool, ...rest] = t.split(".");
@@ -45,12 +45,12 @@ export function candidateScopes(decl: McpServerDecl, ref: ScopeRef): Array<{ sco
     .map((scope) => ({ scope, scopeId: ids[scope]! }));
 }
 
-export function aadFor(c: Pick<McpConnection, "bag" | "server" | "scope" | "scopeId">): string {
-  return `saddlebags:mcp:${c.bag}:${c.server}:${c.scope}:${c.scopeId}`;
+export function aadFor(c: Pick<McpConnection, "plugin" | "server" | "scope" | "scopeId">): string {
+  return `saddlebags:mcp:${c.plugin}:${c.server}:${c.scope}:${c.scopeId}`;
 }
 
 /**
- * Admin-facing management of connections: who connected which bag's server,
+ * Admin-facing management of connections: who connected which plugin's server,
  * at which scope, with which (encrypted) credential.
  */
 export class Connections {
@@ -60,20 +60,20 @@ export class Connections {
   ) {}
 
   async connect(opts: {
-    bag: Bag;
+    plugin: Plugin;
     server: string;
     scope: Scope;
     scopeId: string;
     credential?: string;
     by: string;
   }): Promise<McpConnection> {
-    const decl = serverDecl(opts.bag, opts.server);
+    const decl = serverDecl(opts.plugin, opts.server);
     const allowed = decl.connectAt ?? ["org"];
     if (!allowed.includes(opts.scope)) {
       throw new Error(`MCP server "${opts.server}" can be connected at ${allowed.join(", ")}, not ${opts.scope}`);
     }
     let credential: string | null = null;
-    const target = { bag: opts.bag.name, server: opts.server, scope: opts.scope, scopeId: opts.scopeId };
+    const target = { plugin: opts.plugin.name, server: opts.server, scope: opts.scope, scopeId: opts.scopeId };
     if (decl.auth === "none") {
       if (opts.credential) throw new Error(`MCP server "${opts.server}" uses auth "none"; don't pass a credential`);
     } else {
@@ -85,7 +85,7 @@ export class Connections {
     await this.store.audit({
       actor: opts.by,
       action: "mcp.connect",
-      subject: `${opts.bag.name}:${opts.server}@${opts.scope}:${opts.scopeId}`,
+      subject: `${opts.plugin.name}:${opts.server}@${opts.scope}:${opts.scopeId}`,
     });
     return conn;
   }
@@ -97,15 +97,15 @@ export class Connections {
       await this.store.audit({
         actor: by,
         action: "mcp.disconnect",
-        subject: `${conn.bag}:${conn.server}@${conn.scope}:${conn.scopeId}`,
+        subject: `${conn.plugin}:${conn.server}@${conn.scope}:${conn.scopeId}`,
       });
     }
     return ok;
   }
 
   /** The narrowest connection for this caller, if any. */
-  async resolve(bag: Bag, decl: McpServerDecl, ref: ScopeRef): Promise<McpConnection | undefined> {
-    const conns = await this.store.listConnections({ bag: bag.name, server: decl.name });
+  async resolve(plugin: Plugin, decl: McpServerDecl, ref: ScopeRef): Promise<McpConnection | undefined> {
+    const conns = await this.store.listConnections({ plugin: plugin.name, server: decl.name });
     for (const c of candidateScopes(decl, ref)) {
       const hit = conns.find((x) => x.scope === c.scope && x.scopeId === c.scopeId);
       if (hit) return hit;
@@ -114,8 +114,8 @@ export class Connections {
   }
 
   /** Any connection for a server, broadest first (used for pinning, which isn't caller-specific). */
-  async any(bag: Bag, server: string): Promise<McpConnection | undefined> {
-    const conns = await this.store.listConnections({ bag: bag.name, server });
+  async any(plugin: Plugin, server: string): Promise<McpConnection | undefined> {
+    const conns = await this.store.listConnections({ plugin: plugin.name, server });
     const order: Scope[] = ["org", "group", "user"];
     return conns.sort((a, b) => order.indexOf(a.scope) - order.indexOf(b.scope))[0];
   }

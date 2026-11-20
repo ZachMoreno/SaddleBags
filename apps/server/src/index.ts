@@ -3,7 +3,7 @@ export { Runtime, RuntimeError, openStore, type ServeChannel } from "./runtime.j
 export {
   defineConfig,
   loadConfig,
-  importBag,
+  importPlugin,
   findPackageDir,
   CONFIG_FILES,
   type SaddlebagsConfig,
