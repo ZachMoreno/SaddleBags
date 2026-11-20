@@ -1,7 +1,7 @@
 /**
- * @saddlebags/sdk — authoring types for SaddleBags bags.
+ * @saddlebags/sdk — authoring types for SaddleBags plugins.
  *
- * MIT licensed so that bags (including proprietary ones) can be written
+ * MIT licensed so that plugins (including proprietary ones) can be written
  * against it freely. The runtime lives in @saddlebags/core (AGPL-3.0).
  */
 import type { z } from "zod";
@@ -80,15 +80,15 @@ export type Directive<I = unknown, O = unknown> =
 
 export interface Rule<I = unknown, O = unknown> {
   id: string;
-  /** Human-readable summary, shown in the Stable. */
+  /** Human-readable summary, shown in the Admin. */
   title?: string;
   /** Operations this rule is scoped to. Omit for all operations. */
   operations?: string[];
   condition: Condition<I>;
   directive: Directive<I, O>;
   authoredBy?: Author;
-  /** Where the rule may be edited: only in code, or also as a Stable overlay. */
-  editableIn?: "code" | "stable";
+  /** Where the rule may be edited: only in code, or also as a Admin overlay. */
+  editableIn?: "code" | "admin";
 }
 
 // ─── Tools ────────────────────────────────────────────────────────────────
@@ -174,16 +174,63 @@ export interface ModelRoute<S extends z.ZodType = z.ZodType> {
   /** "provider:model", with a pinned model version. */
   model: `${string}:${string}`;
   system?: string;
+  /** Optional typed input. Required when the route is exposed over MCP. */
+  input?: z.ZodType;
   /** Optional typed output: the "type-safe decision model". */
   output?: S;
   maxTokens?: number;
   temperature?: number;
   /** Max attempts when enforce directives reject. Default 3. */
   maxAttempts?: number;
-  /** Names of bag tools this operation's model may call. Default none. */
+  /**
+   * Tools this operation's model may call. Default none. Plugin tools by name
+   * (`footage_search`); MCP tools as `<server>.<tool>` (`github.search_issues`).
+   */
   tools?: string[];
   /** Max model turns that end in tool calls, per attempt. Default 8. */
   maxToolTurns?: number;
+  /** Expose this operation as a tool on the server's `/mcp` endpoint. */
+  mcp?: {
+    expose: boolean;
+    /** MCP tool name. Default `<plugin>__<operation>`, sanitized. */
+    name?: string;
+    /** MCP tool description. Default: the route's system prompt. */
+    description?: string;
+  };
+}
+
+// ─── MCP (3rd-party servers a plugin uses) ───────────────────────────────────
+
+export type McpTransport =
+  | {
+      kind: "http";
+      /** Streamable HTTP endpoint. */
+      url: string;
+    }
+  | {
+      kind: "stdio";
+      /** Must be on the operator's stdio allowlist to run. */
+      command: string;
+      args?: string[];
+      /** For `auth: "token" | "oauth"`: the env var the credential is passed in. */
+      tokenEnv?: string;
+    };
+
+export interface McpServerDecl {
+  /** Short name used in tool names (`<name>.<tool>`). Letters, digits, `_` and `-`. */
+  name: string;
+  description?: string;
+  transport: McpTransport;
+  /**
+   * How a connection authenticates. `oauth` and `token` both store a
+   * credential (sent as `Authorization: Bearer`, or via `tokenEnv` for stdio).
+   * Interactive OAuth flows arrive with the Admin (M4).
+   */
+  auth: "oauth" | "token" | "none";
+  /** Scopes allowed to hold a connection. Default `["org"]`. */
+  connectAt?: Scope[];
+  /** If not connected, leave its tools out instead of failing the operation. */
+  optional?: boolean;
 }
 
 // ─── Memory ───────────────────────────────────────────────────────────────
@@ -225,9 +272,9 @@ export interface EvalCase<I = unknown, O = unknown> {
   graders: Grader<O>[];
 }
 
-// ─── Bag ──────────────────────────────────────────────────────────────────
+// ─── Plugin ──────────────────────────────────────────────────────────────────
 
-export interface Bag {
+export interface Plugin {
   name: string;
   version: string;
   description?: string;
@@ -236,11 +283,13 @@ export interface Bag {
   tools?: Tool<any, any>[];
   memory?: MemorySchema;
   evals?: EvalCase<any, any>[];
+  /** 3rd-party MCP servers whose tools routes may offer. */
+  mcp?: { servers: McpServerDecl[] };
 }
 
 // ─── define* helpers (identity functions for inference) ───────────────────
 
-export const defineBag = (bag: Bag): Bag => bag;
+export const definePlugin = (plugin: Plugin): Plugin => plugin;
 export const defineRule = <I = unknown, O = unknown>(rule: Rule<I, O>): Rule<I, O> => rule;
 export const defineTool = <S extends z.ZodType, R>(tool: Tool<S, R>): Tool<S, R> => tool;
 export const defineRoute = <S extends z.ZodType>(route: ModelRoute<S>): ModelRoute<S> => route;

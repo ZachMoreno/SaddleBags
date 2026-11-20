@@ -1,4 +1,4 @@
-import type { MemoryEntry, MemoryProposalInput, Scope } from "@saddlebags/sdk";
+import type { MemoryEntry, MemoryProposalInput, Scope, ScopeRef } from "@saddlebags/sdk";
 import type { EvalReport } from "../evals.js";
 
 export type ProposalStatus = "pending" | "approved" | "rejected";
@@ -12,7 +12,7 @@ export interface MemoryProposal extends MemoryProposalInput {
 export type Channel = "rc" | "latest" | "unpublished";
 
 export interface Install {
-  bag: string;
+  plugin: string;
   version: string;
   channel: Channel;
   updatedAt: string;
@@ -27,13 +27,24 @@ export interface ToolCallRecord {
   error?: string;
   /** The enforce-tool rule that blocked the call, if any. */
   blockedBy?: string;
+  /** For MCP tools: the server, and the connection used (`<scope>:<scopeId>`). */
+  server?: string;
+  connection?: string;
+}
+
+/** Something about a run that isn't a rule or an attempt, e.g. MCP tools left out. */
+export interface TraceNote {
+  kind: "mcp.omitted" | "mcp.drift" | "mcp.unpinned";
+  server: string;
+  tool?: string;
+  detail: string;
 }
 
 export interface TraceRecord {
   id: string;
   operation: string;
-  bag: string;
-  bagVersion: string;
+  plugin: string;
+  pluginVersion: string;
   scope: string;
   model: string;
   fired: Array<{ ruleId: string; reason: string }>;
@@ -43,6 +54,9 @@ export interface TraceRecord {
     toolCalls?: ToolCallRecord[];
   }>;
   ok: boolean;
+  /** Who ran it: `api`, `cli`, `eval`, `mcp:<tokenId>`. */
+  caller?: string;
+  notes?: TraceNote[];
   createdAt: string;
 }
 
@@ -55,11 +69,51 @@ export interface AuditEvent {
 
 export interface EvalRunRecord {
   id: string;
-  bag: string;
+  plugin: string;
   version: string;
   passRate: number;
   report: EvalReport;
   createdAt: string;
+}
+
+/** An admin's connection of a plugin-declared MCP server, at one scope. */
+export interface McpConnection {
+  id: string;
+  plugin: string;
+  server: string;
+  scope: Scope;
+  scopeId: string;
+  /** Encrypted credential (opaque to the store), or null for `auth: "none"`. */
+  credential: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface PinnedTool {
+  name: string;
+  description: string;
+  /** sha256 of the tool's input schema (canonical JSON). */
+  schemaHash: string;
+}
+
+/** The tool definitions of one server, snapshotted when a plugin version is promoted. */
+export interface McpPin {
+  plugin: string;
+  version: string;
+  server: string;
+  tools: PinnedTool[];
+  createdAt: string;
+}
+
+/** A bearer token for the /mcp endpoint, bound to a scope. */
+export interface ApiToken {
+  id: string;
+  name: string;
+  scope: ScopeRef;
+  /** sha256 of the token secret. The secret itself is never stored. */
+  secretHash: string;
+  createdAt: string;
+  revokedAt: string | null;
 }
 
 /**
@@ -81,12 +135,26 @@ export interface Store {
   /** Newest last. */
   listTraces(filter?: { operation?: string; limit?: number }): Promise<TraceRecord[]>;
 
-  setInstall(bag: string, version: string, channel: Channel): Promise<void>;
-  listInstalls(bag?: string): Promise<Install[]>;
+  setInstall(plugin: string, version: string, channel: Channel): Promise<void>;
+  listInstalls(plugin?: string): Promise<Install[]>;
 
   putEvalRun(report: EvalReport): Promise<EvalRunRecord>;
-  /** The most recent eval run for a bag version. */
-  latestEvalRun(bag: string, version: string): Promise<EvalRunRecord | undefined>;
+  /** The most recent eval run for a plugin version. */
+  latestEvalRun(plugin: string, version: string): Promise<EvalRunRecord | undefined>;
+
+  /** Upsert by (plugin, server, scope, scopeId). */
+  putConnection(c: Omit<McpConnection, "id" | "createdAt">): Promise<McpConnection>;
+  listConnections(filter?: { plugin?: string; server?: string }): Promise<McpConnection[]>;
+  deleteConnection(id: string): Promise<boolean>;
+
+  /** Upsert by (plugin, version, server). */
+  setPin(pin: Omit<McpPin, "createdAt">): Promise<void>;
+  listPins(plugin: string, version: string): Promise<McpPin[]>;
+
+  putApiToken(t: Omit<ApiToken, "createdAt" | "revokedAt">): Promise<ApiToken>;
+  getApiToken(id: string): Promise<ApiToken | undefined>;
+  listApiTokens(): Promise<ApiToken[]>;
+  revokeApiToken(id: string): Promise<boolean>;
 
   audit(e: AuditEvent): Promise<void>;
   listAudit(): Promise<Array<AuditEvent & { at: string }>>;

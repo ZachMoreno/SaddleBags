@@ -2,11 +2,12 @@
 
 **WordPress for domain-specific agent harnesses.**
 
-A general-purpose model is the horse. **Bags** are what you pack onto it for a
-particular job: rules, tools, per-operation model routes, memory schemas and
-evals. Bags are versioned npm packages you can install, evaluate as release
-candidates, promote and unpublish. The **Stable** is where your whole team,
-engineers and domain experts alike, manages them.
+A general-purpose model knows a lot but nothing about your domain.
+**Plugins** add that: rules, tools, per-operation model routes, memory schemas
+and evals for a particular job. Plugins are versioned npm packages you can
+install, evaluate as release candidates, promote and unpublish, much as
+WordPress plugins are. The **Admin** is where your whole team, engineers and
+domain experts alike, manages them.
 
 SaddleBags is built on one idea from
 *Where Uncertainty Lives: Trade-offs from Building a Domain-Specific Harness*:
@@ -14,7 +15,7 @@ every operation carries uncertainty, and the design question is **what**
 resolves it (code or model), **when** (pre-baked or live) and **who** can
 change it. SaddleBags makes each of those placements explicit.
 
-> Status: early. M1 (core + SDK) is done; M2 (server, CLI, Postgres) is in review. See [SPEC.md](./SPEC.md).
+> Status: early. M1 (core + SDK) and M2 (server, CLI, Postgres) are done; M3 (MCP) is in review. See [SPEC.md](./SPEC.md).
 
 ## Rules = condition + directive
 
@@ -30,13 +31,13 @@ defineRule({
   editableIn: "code",
 });
 
-// A selector model decides *when*: a probabilistic condition. Editable in the Stable.
+// A selector model decides *when*: a probabilistic condition. Editable in the Admin.
 defineRule({
   id: "kids-audience",
   condition: { kind: "model", description: "The brief's audience includes children under 13." },
   directive: { kind: "prose", text: "Use simple words and no calls to purchase." },
   authoredBy: "domain-expert",
-  editableIn: "stable",
+  editableIn: "admin",
 });
 
 // Code enforces: reject, and the runtime retries with the reason fed back.
@@ -67,10 +68,10 @@ defineRule({
 ```ts
 import { Harness } from "@saddlebags/core";
 import { AnthropicProvider, OpenAIProvider, GoogleProvider } from "@saddlebags/providers";
-import videoBag from "@saddlebags/bag-video-brief-to-script";
+import videoPlugin from "@saddlebags/plugin-video-brief-to-script";
 
 const harness = new Harness({
-  bag: videoBag,
+  plugin: videoPlugin,
   providers: [new AnthropicProvider(), new OpenAIProvider(), new GoogleProvider()],
   selectorModel: "anthropic:claude-opus-5-5",
 });
@@ -83,7 +84,7 @@ trace.fired;    // [{ ruleId: "long-form-pacing", reason: "predicate" }, ...]
 trace.attempts; // every attempt: tool calls, results and enforce rejections
 ```
 
-Routes choose which bag tools their model may call. The runtime runs the tool
+Routes choose which plugin tools their model may call. The runtime runs the tool
 loop: it validates arguments, applies `enforce-tool` rules (transform or
 block), runs the tool and feeds results back until the model answers. Failed
 calls go back to the model as errors instead of crashing the operation.
@@ -92,15 +93,15 @@ calls go back to the model as errors instead of crashing the operation.
 
 | Package | What | License |
 |---------|------|---------|
-| [`@saddlebags/sdk`](packages/sdk) | Bag authoring types and `define*` helpers | MIT |
+| [`@saddlebags/sdk`](packages/sdk) | Plugin authoring types and `define*` helpers | MIT |
 | [`@saddlebags/core`](packages/core) | Runtime: rules, context, enforcement, memory, SQLite store, evals, lifecycle | AGPL-3.0 |
 | [`@saddlebags/providers`](packages/providers) | Anthropic, OpenAI and Google adapters | AGPL-3.0 |
 | [`@saddlebags/artifacts-s3`](packages/artifacts-s3) | S3-compatible artifact library | AGPL-3.0 |
-| [`bags/video-brief-to-script`](bags/video-brief-to-script) | Reference bag | MIT |
+| [`plugins/video-brief-to-script`](plugins/video-brief-to-script) | Reference plugin | MIT |
 | [`@saddlebags/store-postgres`](packages/store-postgres) | Postgres store (Drizzle) | AGPL-3.0 |
-| [`@saddlebags/server`](apps/server) | HTTP runtime + `saddlebags` CLI; MCP server endpoint *(M3)* | AGPL-3.0 |
-| `packages/mcp` | MCP client + server adapters *(M3)* | AGPL-3.0 |
-| [`apps/stable`](apps/stable) | Web admin *(M4)* | AGPL-3.0 |
+| [`@saddlebags/mcp`](packages/mcp) | MCP client (connections, pinning, drift) and the `/mcp` server handler | AGPL-3.0 |
+| [`@saddlebags/server`](apps/server) | HTTP runtime, `/mcp` endpoint and `saddlebags` CLI | AGPL-3.0 |
+| [`apps/admin`](apps/admin) | Web admin *(M4)* | AGPL-3.0 |
 
 ## Develop
 
@@ -113,5 +114,5 @@ Requires Node ≥ 22.13.
 ## License
 
 The core is [AGPL-3.0-only](./LICENSE), so hosted forks stay open. The SDK and
-bags are MIT, so the bags you write can be under any license, including a
+plugins are MIT, so the plugins you write can be under any license, including a
 proprietary one.

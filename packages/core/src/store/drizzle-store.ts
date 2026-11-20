@@ -1,17 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy";
-import type { MemoryEntry, MemoryProposalInput, Scope } from "@saddlebags/sdk";
+import type { MemoryEntry, MemoryProposalInput, Scope, ScopeRef } from "@saddlebags/sdk";
 import type { EvalReport } from "../evals.js";
 import * as schema from "./schema-sqlite.js";
 import type {
+  ApiToken,
   AuditEvent,
   Channel,
+  McpConnection,
+  McpPin,
+  PinnedTool,
   EvalRunRecord,
   Install,
   MemoryProposal,
   ProposalStatus,
   Store,
+  TraceNote,
   TraceRecord,
 } from "./types.js";
 
@@ -90,7 +95,7 @@ export abstract class DrizzleStore implements Store {
 
   async putTrace(t: Omit<TraceRecord, "id" | "createdAt">): Promise<TraceRecord> {
     const trace: TraceRecord = { ...t, id: randomUUID(), createdAt: now() };
-    await this.db.insert(this.t.traces).values(trace);
+    await this.db.insert(this.t.traces).values({ ...trace, caller: t.caller ?? null, notes: t.notes ?? null });
     return trace;
   }
 
@@ -109,26 +114,26 @@ export abstract class DrizzleStore implements Store {
     return rows.reverse().map(toTrace);
   }
 
-  async setInstall(bag: string, version: string, channel: Channel): Promise<void> {
+  async setInstall(plugin: string, version: string, channel: Channel): Promise<void> {
     const i = this.t.installs;
     const updatedAt = now();
     await this.db
       .insert(i)
-      .values({ bag, version, channel, updatedAt })
-      .onConflictDoUpdate({ target: [i.bag, i.version], set: { channel, updatedAt } });
+      .values({ plugin, version, channel, updatedAt })
+      .onConflictDoUpdate({ target: [i.plugin, i.version], set: { channel, updatedAt } });
   }
 
-  async listInstalls(bag?: string): Promise<Install[]> {
+  async listInstalls(plugin?: string): Promise<Install[]> {
     const i = this.t.installs;
     const q = this.db.select().from(i);
-    const rows = await (bag ? q.where(eq(i.bag, bag)) : q).orderBy(asc(i.bag), asc(i.updatedAt));
-    return rows.map((r) => ({ bag: r.bag, version: r.version, channel: r.channel as Channel, updatedAt: r.updatedAt }));
+    const rows = await (plugin ? q.where(eq(i.plugin, plugin)) : q).orderBy(asc(i.plugin), asc(i.updatedAt));
+    return rows.map((r) => ({ plugin: r.plugin, version: r.version, channel: r.channel as Channel, updatedAt: r.updatedAt }));
   }
 
   async putEvalRun(report: EvalReport): Promise<EvalRunRecord> {
     const run: EvalRunRecord = {
       id: randomUUID(),
-      bag: report.bag,
+      plugin: report.plugin,
       version: report.version,
       passRate: report.passRate,
       report,
@@ -138,24 +143,117 @@ export abstract class DrizzleStore implements Store {
     return run;
   }
 
-  async latestEvalRun(bag: string, version: string): Promise<EvalRunRecord | undefined> {
+  async latestEvalRun(plugin: string, version: string): Promise<EvalRunRecord | undefined> {
     const e = this.t.evalRuns;
     const [row] = await this.db
       .select()
       .from(e)
-      .where(and(eq(e.bag, bag), eq(e.version, version)))
+      .where(and(eq(e.plugin, plugin), eq(e.version, version)))
       .orderBy(desc(e.seq))
       .limit(1);
     return (
       row && {
         id: row.id,
-        bag: row.bag,
+        plugin: row.plugin,
         version: row.version,
         passRate: row.passRate,
-        report: row.report as EvalReport,
+        report: upgradeReport(row.report),
         createdAt: row.createdAt,
       }
     );
+  }
+
+  async putConnection(c: Omit<McpConnection, "id" | "createdAt">): Promise<McpConnection> {
+    const mc = this.t.mcpConnections;
+    const createdAt = now();
+    const [row] = await this.db
+      .insert(mc)
+      .values({ id: randomUUID(), ...c, createdAt })
+      .onConflictDoUpdate({
+        target: [mc.plugin, mc.server, mc.scope, mc.scopeId],
+        set: { credential: c.credential, createdBy: c.createdBy, createdAt },
+      })
+      .returning();
+    return toConnection(row!);
+  }
+
+  async listConnections(filter: { plugin?: string; server?: string } = {}): Promise<McpConnection[]> {
+    const mc = this.t.mcpConnections;
+    const conds = [filter.plugin ? eq(mc.plugin, filter.plugin) : undefined, filter.server ? eq(mc.server, filter.server) : undefined];
+    const rows = await this.db
+      .select()
+      .from(mc)
+      .where(and(...conds))
+      .orderBy(asc(mc.plugin), asc(mc.server), asc(mc.scope), asc(mc.scopeId));
+    return rows.map(toConnection);
+  }
+
+  async deleteConnection(id: string): Promise<boolean> {
+    const mc = this.t.mcpConnections;
+    const rows = await this.db.delete(mc).where(eq(mc.id, id)).returning();
+    return rows.length > 0;
+  }
+
+  async setPin(pin: Omit<McpPin, "createdAt">): Promise<void> {
+    const p = this.t.mcpPins;
+    const createdAt = now();
+    await this.db
+      .insert(p)
+      .values({ ...pin, createdAt })
+      .onConflictDoUpdate({ target: [p.plugin, p.version, p.server], set: { tools: pin.tools, createdAt } });
+  }
+
+  async listPins(plugin: string, version: string): Promise<McpPin[]> {
+    const p = this.t.mcpPins;
+    const rows = await this.db
+      .select()
+      .from(p)
+      .where(and(eq(p.plugin, plugin), eq(p.version, version)))
+      .orderBy(asc(p.server));
+    return rows.map((r) => ({
+      plugin: r.plugin,
+      version: r.version,
+      server: r.server,
+      tools: r.tools as PinnedTool[],
+      createdAt: r.createdAt,
+    }));
+  }
+
+  async putApiToken(t: Omit<ApiToken, "createdAt" | "revokedAt">): Promise<ApiToken> {
+    const token: ApiToken = { ...t, createdAt: now(), revokedAt: null };
+    await this.db.insert(this.t.apiTokens).values({
+      id: t.id,
+      name: t.name,
+      orgId: t.scope.orgId,
+      groupId: t.scope.groupId ?? null,
+      userId: t.scope.userId ?? null,
+      secretHash: t.secretHash,
+      createdAt: token.createdAt,
+      revokedAt: null,
+    });
+    return token;
+  }
+
+  async getApiToken(id: string): Promise<ApiToken | undefined> {
+    const at = this.t.apiTokens;
+    const [row] = await this.db.select().from(at).where(eq(at.id, id));
+    return row && toApiToken(row);
+  }
+
+  async listApiTokens(): Promise<ApiToken[]> {
+    const at = this.t.apiTokens;
+    const rows = await this.db.select().from(at).orderBy(asc(at.createdAt), asc(at.id));
+    return rows.map(toApiToken);
+  }
+
+  async revokeApiToken(id: string): Promise<boolean> {
+    const at = this.t.apiTokens;
+    const rows = await this.db
+      .update(at)
+      .set({ revokedAt: now() })
+      .where(and(eq(at.id, id), isNull(at.revokedAt)))
+      .returning();
+    return rows.length > 0;
   }
 
   async audit(e: AuditEvent): Promise<void> {
@@ -197,13 +295,45 @@ function toTrace(r: typeof schema.traces.$inferSelect): TraceRecord {
   return {
     id: r.id,
     operation: r.operation,
-    bag: r.bag,
-    bagVersion: r.bagVersion,
+    plugin: r.plugin,
+    pluginVersion: r.pluginVersion,
     scope: r.scope,
     model: r.model,
     fired: r.fired as TraceRecord["fired"],
     attempts: r.attempts as TraceRecord["attempts"],
     ok: r.ok,
+    ...(r.caller != null && { caller: r.caller }),
+    ...(r.notes != null && { notes: r.notes as TraceNote[] }),
     createdAt: r.createdAt,
   };
+}
+
+function toConnection(r: typeof schema.mcpConnections.$inferSelect): McpConnection {
+  return {
+    id: r.id,
+    plugin: r.plugin,
+    server: r.server,
+    scope: r.scope as Scope,
+    scopeId: r.scopeId,
+    credential: r.credential,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+  };
+}
+
+function toApiToken(r: typeof schema.apiTokens.$inferSelect): ApiToken {
+  const scope: ScopeRef = { orgId: r.orgId };
+  if (r.groupId != null) scope.groupId = r.groupId;
+  if (r.userId != null) scope.userId = r.userId;
+  return { id: r.id, name: r.name, scope, secretHash: r.secretHash, createdAt: r.createdAt, revokedAt: r.revokedAt };
+}
+
+/** Reports stored before Bags were renamed to Plugins carry `bag` instead of `plugin`. */
+function upgradeReport(raw: unknown): EvalReport {
+  const r = raw as EvalReport & { bag?: string };
+  if (r.plugin === undefined && r.bag !== undefined) {
+    const { bag, ...rest } = r;
+    return { ...rest, plugin: bag };
+  }
+  return r;
 }

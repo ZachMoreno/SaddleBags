@@ -1,0 +1,32 @@
+{
+  "name": "@saddlebags/mcp",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@saddlebags/core": "workspace:*",
+    "@saddlebags/sdk": "workspace:*",
+    "ajv": "^8.17.1",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.9"
+  }
+}

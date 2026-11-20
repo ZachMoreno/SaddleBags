@@ -29,7 +29,7 @@ package.
 
 ## Licensing
 
-- `packages/sdk` and `bags/*` are MIT.
+- `packages/sdk` and `plugins/*` are MIT.
 - Everything else is AGPL-3.0-only.
 
 By contributing, you agree your contribution is licensed under the license of

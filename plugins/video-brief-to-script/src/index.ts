@@ -1,12 +1,12 @@
 /**
- * Reference bag: video brief → script.
+ * Reference plugin: video brief → script.
  *
  * Every rule here demonstrates one placement on the essay's axes:
  * what resolves it (code or model), and who can change it.
  */
 import { z } from "zod";
 import {
-  defineBag,
+  definePlugin,
   defineEval,
   defineRoute,
   defineRule,
@@ -43,10 +43,11 @@ export const Script = z.object({
 });
 export type Script = z.infer<typeof Script>;
 
-export interface ScriptInput {
-  brief: string;
-  classification: BriefClass;
-}
+export const ScriptInput = z.object({
+  brief: z.string().describe("The video brief, in the client's words"),
+  classification: BriefClass,
+});
+export type ScriptInput = z.infer<typeof ScriptInput>;
 
 // ─── Tools ────────────────────────────────────────────────────────────────
 
@@ -90,16 +91,24 @@ const routes = [
     system:
       "You write shot-by-shot video scripts with voiceover. Use footage_search to find stock clips " +
       "and cite clip IDs in shot visuals where they fit.",
+    input: ScriptInput,
     output: Script,
     tools: ["footage_search"],
     maxAttempts: 3,
+    // Served on /mcp, so agents can request scripts with the house rules applied.
+    mcp: {
+      expose: true,
+      description:
+        "Write a shot-by-shot video script with voiceover from a brief and its classification, " +
+        "applying the team's pacing, duration and aspect-ratio rules.",
+    },
   }),
 ];
 
 // ─── Rules ────────────────────────────────────────────────────────────────
 
 const rules = [
-  // always + prose: anyone can edit it in the Stable.
+  // always + prose: anyone can edit it in the Admin.
   defineRule({
     id: "house-style",
     title: "House style",
@@ -110,7 +119,7 @@ const rules = [
       text: "Open on the product or person, never on a logo. Plain language; no jargon in voiceover.",
     },
     authoredBy: "domain-expert",
-    editableIn: "stable",
+    editableIn: "admin",
   }),
 
   // code condition + prose directive: the essay's own example.
@@ -135,7 +144,7 @@ const rules = [
       text: "Use simple words, no calls to purchase, and no urgency language.",
     },
     authoredBy: "domain-expert",
-    editableIn: "stable",
+    editableIn: "admin",
   }),
 
   // always + enforce-tool (transform): searches always use the brief's aspect ratio.
@@ -242,8 +251,8 @@ const evals = [
   }),
 ];
 
-export default defineBag({
-  name: "@saddlebags/bag-video-brief-to-script",
+export default definePlugin({
+  name: "@saddlebags/plugin-video-brief-to-script",
   version: "0.1.0",
   description: "Classify a video brief, then write a shot list with voiceover.",
   routes,

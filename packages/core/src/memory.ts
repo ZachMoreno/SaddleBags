@@ -56,7 +56,7 @@ export class Memory {
     return { proposal, entry };
   }
 
-  /** A human resolves a pending proposal (in the Stable). */
+  /** A human resolves a pending proposal (in the Admin). */
   async resolve(proposalId: string, approve: boolean, reviewer: string): Promise<MemoryEntry | undefined> {
     const p = await this.store.getProposal(proposalId);
     if (!p) throw new Error(`No memory proposal ${proposalId}`);

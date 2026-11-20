@@ -2,35 +2,35 @@ import type { Store } from "./store/types.js";
 import { evalGate, type EvalReport, type GateResult } from "./evals.js";
 
 /**
- * Release lifecycle for installed bags: rc → latest (gated by evals) → unpublished.
+ * Release lifecycle for installed plugins: rc → latest (gated by evals) → unpublished.
  * Mirrors npm dist-tags; this tracks what the runtime actually serves.
  */
 export class Lifecycle {
   constructor(private store: Store) {}
 
-  async installRc(bag: string, version: string, actor: string): Promise<void> {
-    await this.store.setInstall(bag, version, "rc");
-    await this.store.audit({ actor, action: "bag.install.rc", subject: `${bag}@${version}` });
+  async installRc(plugin: string, version: string, actor: string): Promise<void> {
+    await this.store.setInstall(plugin, version, "rc");
+    await this.store.audit({ actor, action: "plugin.install.rc", subject: `${plugin}@${version}` });
   }
 
   /** Promote an RC to latest if its eval report clears the gate against the current latest. */
   async promote(
-    bag: string,
+    plugin: string,
     candidate: EvalReport,
     actor: string,
     opts: { baseline?: EvalReport; minPassRate?: number } = {},
   ): Promise<GateResult> {
     const gate = evalGate(candidate, opts.baseline, opts.minPassRate);
-    const subject = `${bag}@${candidate.version}`;
-    await this.store.audit({ actor, action: gate.ok ? "bag.promote" : "bag.promote.blocked", subject, detail: gate });
+    const subject = `${plugin}@${candidate.version}`;
+    await this.store.audit({ actor, action: gate.ok ? "plugin.promote" : "plugin.promote.blocked", subject, detail: gate });
     if (!gate.ok) return gate;
 
-    for (const i of await this.store.listInstalls(bag)) {
+    for (const i of await this.store.listInstalls(plugin)) {
       if (i.channel === "latest" && i.version !== candidate.version) {
-        await this.store.setInstall(bag, i.version, "unpublished");
+        await this.store.setInstall(plugin, i.version, "unpublished");
       }
     }
-    await this.store.setInstall(bag, candidate.version, "latest");
+    await this.store.setInstall(plugin, candidate.version, "latest");
     return gate;
   }
 
@@ -39,30 +39,30 @@ export class Lifecycle {
    * `version`, and the baseline is the latest run for the current `latest`.
    */
   async promoteFromStore(
-    bag: string,
+    plugin: string,
     version: string,
     actor: string,
     opts: { minPassRate?: number } = {},
   ): Promise<GateResult> {
-    const candidate = await this.store.latestEvalRun(bag, version);
+    const candidate = await this.store.latestEvalRun(plugin, version);
     if (!candidate) {
-      return { ok: false, regressions: [], reasons: [`No eval run for ${bag}@${version}. Run evals first.`] };
+      return { ok: false, regressions: [], reasons: [`No eval run for ${plugin}@${version}. Run evals first.`] };
     }
-    const current = await this.latest(bag);
-    const baseline = current && current !== version ? await this.store.latestEvalRun(bag, current) : undefined;
-    return this.promote(bag, candidate.report, actor, { baseline: baseline?.report, minPassRate: opts.minPassRate });
+    const current = await this.latest(plugin);
+    const baseline = current && current !== version ? await this.store.latestEvalRun(plugin, current) : undefined;
+    return this.promote(plugin, candidate.report, actor, { baseline: baseline?.report, minPassRate: opts.minPassRate });
   }
 
-  async unpublish(bag: string, version: string, actor: string): Promise<void> {
-    await this.store.setInstall(bag, version, "unpublished");
-    await this.store.audit({ actor, action: "bag.unpublish", subject: `${bag}@${version}` });
+  async unpublish(plugin: string, version: string, actor: string): Promise<void> {
+    await this.store.setInstall(plugin, version, "unpublished");
+    await this.store.audit({ actor, action: "plugin.unpublish", subject: `${plugin}@${version}` });
   }
 
-  async latest(bag: string): Promise<string | undefined> {
-    return (await this.store.listInstalls(bag)).find((i) => i.channel === "latest")?.version;
+  async latest(plugin: string): Promise<string | undefined> {
+    return (await this.store.listInstalls(plugin)).find((i) => i.channel === "latest")?.version;
   }
 
-  async channelOf(bag: string, version: string): Promise<string | undefined> {
-    return (await this.store.listInstalls(bag)).find((i) => i.version === version)?.channel;
+  async channelOf(plugin: string, version: string): Promise<string | undefined> {
+    return (await this.store.listInstalls(plugin)).find((i) => i.version === version)?.channel;
   }
 }

@@ -17,7 +17,7 @@ export interface CaseResult {
 }
 
 export interface EvalReport {
-  bag: string;
+  plugin: string;
   version: string;
   passRate: number;
   cases: CaseResult[];
@@ -28,18 +28,24 @@ export interface EvalOptions {
   /** Providers for judge graders (defaults to none: judge graders then fail). */
   judges?: ModelProvider[];
   cases?: EvalCase[];
+  /** Recorded on each run's trace. Default "eval". */
+  caller?: string;
 }
 
-/** Run a bag's golden cases against a harness. */
+/** Run a plugin's golden cases against a harness. */
 export async function runEvals(harness: Harness, opts: EvalOptions = {}): Promise<EvalReport> {
-  const cases = opts.cases ?? harness.bag.evals ?? [];
+  const cases = opts.cases ?? harness.plugin.evals ?? [];
   const scope = opts.scope ?? { orgId: "eval" };
   const judges = new Map((opts.judges ?? []).map((p) => [p.id, p]));
   const results: CaseResult[] = [];
 
   for (const c of cases) {
     try {
-      const { output } = await harness.run(c.operation, c.input, { scope, meta: { eval: c.id } });
+      const { output } = await harness.run(c.operation, c.input, {
+        scope,
+        meta: { eval: c.id },
+        caller: opts.caller ?? "eval",
+      });
       const graders: GraderResult[] = [];
       for (const g of c.graders) {
         if (g.kind === "code") {
@@ -58,8 +64,8 @@ export async function runEvals(harness: Harness, opts: EvalOptions = {}): Promis
 
   const passed = results.filter((r) => r.pass).length;
   return {
-    bag: harness.bag.name,
-    version: harness.bag.version,
+    plugin: harness.plugin.name,
+    version: harness.plugin.version,
     passRate: cases.length ? passed / cases.length : 1,
     cases: results,
   };

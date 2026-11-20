@@ -33,31 +33,33 @@ export const traces = pgTable("traces", {
   seq: serial("seq").primaryKey(),
   id: text("id").notNull().unique(),
   operation: text("operation").notNull(),
-  bag: text("bag").notNull(),
-  bagVersion: text("bag_version").notNull(),
+  plugin: text("plugin").notNull(),
+  pluginVersion: text("plugin_version").notNull(),
   scope: text("scope").notNull(),
   model: text("model").notNull(),
   fired: jsonb("fired").notNull(),
   attempts: jsonb("attempts").notNull(),
   ok: boolean("ok").notNull(),
+  caller: text("caller"),
+  notes: jsonb("notes"),
   createdAt: text("created_at").notNull(),
 });
 
 export const installs = pgTable(
   "installs",
   {
-    bag: text("bag").notNull(),
+    plugin: text("plugin").notNull(),
     version: text("version").notNull(),
     channel: text("channel").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.bag, t.version] })],
+  (t) => [primaryKey({ columns: [t.plugin, t.version] })],
 );
 
 export const evalRuns = pgTable("eval_runs", {
   seq: serial("seq").primaryKey(),
   id: text("id").notNull().unique(),
-  bag: text("bag").notNull(),
+  plugin: text("plugin").notNull(),
   version: text("version").notNull(),
   passRate: doublePrecision("pass_rate").notNull(),
   report: jsonb("report").notNull(),
@@ -71,4 +73,42 @@ export const audit = pgTable("audit", {
   action: text("action").notNull(),
   subject: text("subject").notNull(),
   detail: jsonb("detail"),
+});
+
+export const mcpConnections = pgTable(
+  "mcp_connections",
+  {
+    id: text("id").primaryKey(),
+    plugin: text("plugin").notNull(),
+    server: text("server").notNull(),
+    scope: text("scope").notNull(),
+    scopeId: text("scope_id").notNull(),
+    credential: text("credential"),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("mcp_connections_target").on(t.plugin, t.server, t.scope, t.scopeId)],
+);
+
+export const mcpPins = pgTable(
+  "mcp_pins",
+  {
+    plugin: text("plugin").notNull(),
+    version: text("version").notNull(),
+    server: text("server").notNull(),
+    tools: jsonb("tools").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.plugin, t.version, t.server] })],
+);
+
+export const apiTokens = pgTable("api_tokens", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  orgId: text("org_id").notNull(),
+  groupId: text("group_id"),
+  userId: text("user_id"),
+  secretHash: text("secret_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  revokedAt: text("revoked_at"),
 });

@@ -1,4 +1,5 @@
 export * from "./harness.js";
+export * from "./external-tools.js";
 export * from "./rules.js";
 export * from "./memory.js";
 export * from "./store/index.js";

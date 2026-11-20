@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { MockProvider, SqliteStore } from "@saddlebags/core";
-import { defineBag, pass, reject } from "@saddlebags/sdk";
+import { definePlugin, pass, reject } from "@saddlebags/sdk";
 import { createApp, Runtime } from "../src/index.js";
 
-const bag = defineBag({
-  name: "@test/echo-bag",
+const plugin = definePlugin({
+  name: "@test/echo-plugin",
   version: "1.0.0",
   routes: [
     { operation: "echo", model: "mock:m" },
@@ -28,7 +28,7 @@ async function setup(token?: string) {
   const provider = new MockProvider("mock", (req) =>
     req.messages[0]!.role === "user" && req.messages[0]!.content.includes("neg") ? '{"n": -1}' : '{"n": 3}',
   );
-  const rt = await Runtime.create({ bags: [bag], providers: [provider] }, "/", { store: new SqliteStore() });
+  const rt = await Runtime.create({ plugins: [plugin], providers: [provider] }, "/", { store: new SqliteStore() });
   const app = createApp(rt, { token });
   const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
     app.request(path, {
@@ -39,7 +39,7 @@ async function setup(token?: string) {
   return { rt, call };
 }
 
-const enc = encodeURIComponent(bag.name);
+const enc = encodeURIComponent(plugin.name);
 
 describe("HTTP API", () => {
   let ctx: Awaited<ReturnType<typeof setup>>;
@@ -47,14 +47,14 @@ describe("HTTP API", () => {
     ctx = await setup();
   });
 
-  it("refuses operations of uninstalled bags, serves rc on request, latest after promotion", async () => {
+  it("refuses operations of uninstalled plugins, serves rc on request, latest after promotion", async () => {
     const run = (channel?: string) => ctx.call("POST", "/operations/echo", { input: "hi", scope, channel });
 
     let res = await run();
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/not installed/);
 
-    await ctx.rt.lifecycle.installRc(bag.name, "1.0.0", "test");
+    await ctx.rt.lifecycle.installRc(plugin.name, "1.0.0", "test");
     expect((await run()).status).toBe(409);
     res = await run("rc");
     expect(res.status).toBe(200);
@@ -64,19 +64,19 @@ describe("HTTP API", () => {
     const trace = await (await ctx.call("GET", `/traces/${traceId}`)).json();
     expect(trace.operation).toBe("echo");
 
-    expect((await ctx.call("POST", `/bags/${enc}/promote`, {})).status).toBe(409); // no eval run yet
-    const report = await (await ctx.call("POST", `/bags/${enc}/evals`)).json();
+    expect((await ctx.call("POST", `/plugins/${enc}/promote`, {})).status).toBe(409); // no eval run yet
+    const report = await (await ctx.call("POST", `/plugins/${enc}/evals`)).json();
     expect(report.passRate).toBe(1);
-    const promoted = await ctx.call("POST", `/bags/${enc}/promote`, {});
+    const promoted = await ctx.call("POST", `/plugins/${enc}/promote`, {});
     expect(promoted.status).toBe(200);
     expect((await run()).status).toBe(200);
 
-    expect((await ctx.call("POST", `/bags/${enc}/unpublish`, { version: "1.0.0" })).status).toBe(200);
+    expect((await ctx.call("POST", `/plugins/${enc}/unpublish`, { version: "1.0.0" })).status).toBe(200);
     expect((await run()).status).toBe(409);
   });
 
   it("returns 422 with the trace id when enforcement fails", async () => {
-    await ctx.rt.lifecycle.installRc(bag.name, "1.0.0", "test");
+    await ctx.rt.lifecycle.installRc(plugin.name, "1.0.0", "test");
     const res = await ctx.call("POST", "/operations/count", { input: "neg", scope, channel: "rc" });
     expect(res.status).toBe(422);
     const body = await res.json();
